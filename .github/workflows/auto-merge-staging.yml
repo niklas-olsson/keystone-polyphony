@@ -43,6 +43,6 @@ jobs:
           # Fetch the PR branch into a local ref
           git fetch origin pull/${{ github.event.pull_request.number }}/head:pr-branch
           # Merge it into staging
-          git merge pr-branch --no-edit --no-ff
+          git merge pr-branch --no-edit
           # Push back to origin
           git push origin staging

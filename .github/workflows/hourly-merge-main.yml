@@ -135,7 +135,7 @@ jobs:
         run: |
           set -euo pipefail
           git checkout -B main origin/main
-          git merge "${{ needs.detect-staging.outputs.staging_sha }}" --no-edit --no-ff
+          git merge "${{ needs.detect-staging.outputs.staging_sha }}" --ff-only
           git push origin main
 
   create-upstream-pr:
