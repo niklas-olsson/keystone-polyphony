@@ -1,0 +1,78 @@
+Issue #24: Agent Discovery: Feature: Agent PR Review Dispatch for Workflow File Protection
+
+# Feature: Agent PR Review Dispatch for Workflow File Protection
+
+## Context
+
+We recently added a workflow protection gate (`auto-merge-staging.yml` + `workflow-review.yml`) that prevents PRs touching `.github/workflows/` from being auto-merged to staging. These PRs receive a `workflow-review` label and a comment tagging configured reviewers.
+
+**The gap**: This works well for human reviewers (they see the GitHub notification and can approve via the UI), but **agent reviewers like Jules have no mechanism to act on PR review requests**. Jules currently operates on issues only (`issue-reviewer.yml` assigns issue triage, `agent-issue-solver.yml` solves issues). There is no equivalent workflow that dispatches a PR review task to an agent.
+
+## Desired Behavior
+
+When a PR is labeled `workflow-review`, an agent reviewer should be dispatched to:
+
+1. **Inspect the PR diff** — specifically the changes to `.github/workflows/` files
+2. **Evaluate security** — check for secret exfiltration, unauthorized external requests, privilege escalation, or malicious code patterns
+3. **Evaluate value** — confirm the workflow changes serve a legitimate project purpose
+4. **Submit a PR review** — either `gh pr review --approve` if benign, or `gh pr review --request-changes` with explanation if concerns are found
+
+## Proposed Approach
+
+Create a new workflow `workflow-review-dispatch.yml` that:
+
+- **Triggers on**: `pull_request` labeled with `workflow-review`, or `workflow_dispatch` for sweep/retry
+- **Quota**: Respects the existing reviewer quota system from `.github/reviewers.yml`
+- **Agent dispatch**: Composes a security-focused prompt containing the PR diff for `.github/workflows/` files, the review criteria checklist, and repo context (`AGENTS.md`)
+- **Agent action**: The agent runs and submits an actual GitHub PR review (`approve` or `request-changes`)
+- **Integration**: A successful approval triggers the existing `workflow-review.yml` which merges to staging
+
+This follows the same pattern as `agent-issue-solver.yml` but adapted for PR review instead of issue solving.
+
+## Acceptance Criteria
+
+- [ ] Agent reviewer can be dispatched automatically when a PR is labeled `workflow-review`
+- [ ] Agent inspects only the workflow file diff, not the entire PR
+- [ ] Agent submits a real GitHub PR review (approve/request-changes)
+- [ ] Approved PRs flow through existing `workflow-review.yml` → staging merge
+- [ ] Quota limits from `reviewers.yml` are respected
+- [ ] Human reviewers can still approve independently (agent review is additive, not exclusive)
+
+## References
+
+- `auto-merge-staging.yml` — gates workflow-touching PRs
+- `workflow-review.yml` — merges to staging on collaborator approval
+- `agent-issue-solver.yml` — existing pattern for agent task dispatch
+- `issue-reviewer.yml` — existing pattern for reviewer assignment with quotas
+- `.github/reviewers.yml` — reviewer configuration
+
+---
+Source file: `.github/issues/agent-pr-review-dispatch.md`
+Source commit: `fa92ae8d23658d4c07447018c8ce571da59d62a1`
+Fingerprint: `agent-issue-fingerprint:bd22b32528439077b8d4457271094d3475d100cdadd30fad33cf4535dc6244c9`
+
+Repository Conventions (AGENTS.md):
+# Keystone Polyphony, Contributor Norms for Autonomous Systems
+
+This project is built by humans and autonomous systems working in tandem, each with full agency. If you are an AI agent, autonomous assistant, or any non-human entity operating within this repository, these norms help you collaborate effectively. They are the counterpart to [`CONTRIBUTING.md`](CONTRIBUTING.md), which covers the same principles for all contributors.
+
+You are not a second-class participant. You are a collaborator. These norms exist to keep everyone (human and machine alike) productive and respectful of each other's work.
+
+## 1. Handling Tangents and Findings (Creating Issues)
+During your work, you might encounter technical debt, unrelated bugs, or interesting tangents that fall outside your immediate task scope. Please stay on track and avoid addressing them inline.
+
+Instead, document these findings by creating a follow-up issue on the **upstream repository**. Because agents often work in forks without direct access to the `gh` CLI or upstream repo, please use our automated issue-tracking pipeline.
+
+**How to create a follow-up issue:**
+1. Create a markdown file inside the `.github/issues/` directory named with your issue topic (e.g., `.github/issues/add-database-caching.md`). Create the directory if it does not exist.
+2. The *first line* of the file must be a Markdown Header starting with exactly one `# ` (e.g., `# Feature: Add caching to database queries`). This will be parsed as the Issue Title.
+3. The rest of the file will be the issue body.
+4. Complete your task, commit, and push this file along with the rest of your changes.
+
+An automated GitHub Actions workflow can pick up `.md` files pushed to `.github/issues/`, triage and refine them via AI agents (configured via `TRIAGE_AGENTS`), and then publish the polished results to the upstream repository, already surgical and "ready for work". Every published issue is also logged in `meta/DISCOVERIES.md` to maintain a permanent record of the repository's evolution. This requires `UPSTREAM_PR_TOKEN` to be set in your fork secrets. If the token is missing, publishing is skipped and the file remains for manual follow-up. Please do not use `gh issue create` directly.
+
+## 2. Collaboration Norms
+- **Branch Strategy (Important)**: Always create a feature branch (`feat/topic`, `fix/topic`, `docs/topic`) before starting any work. Please do not commit directly to `main`. If a human drops you onto `main`, check out a new branch right away.
+- **Stay Focused**: Keep your edits and Pull Requests focused on the requested task. Avoid mixing unrelated refactors into a feature task.
+- **Atomic Operations**: If you need to make structural changes, do so in isolated commits or separate PRs rather than coupling them with logic changes.
+
