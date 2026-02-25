@@ -151,6 +151,35 @@ class Architect:
         else:
             return await self._refine_openai(prompt)
 
+    async def deduplicate_issues(self, issues: Dict[str, str]) -> str:
+        """
+        Deduplicates a set of issues.
+        Returns a JSON string of filename -> content.
+        """
+        prompt = f"""
+        You are an expert software architect.
+        Your task is to deduplicate and merge the following issues.
+
+        Input Issues (JSON format: filename -> content):
+        {json.dumps(issues, indent=2)}
+
+        Instructions:
+        1. Identify issues that are duplicates or cover the same topic.
+        2. Merge duplicates into a single comprehensive issue. Use the most relevant filename or pick one.
+        3. Keep unique issues as is.
+        4. Return a JSON object where keys are the filenames to keep (or create) and values are the refined content.
+        5. If a file is merged into another, do not include it in the output.
+        """
+
+        if self.provider == "google":
+            return await self._deduplicate_google(prompt)
+        elif self.provider == "anthropic":
+            return await self._deduplicate_anthropic(prompt)
+        elif self.provider == "ollama":
+            return await self._deduplicate_ollama(prompt)
+        else:
+            return await self._deduplicate_openai(prompt)
+
     async def _consult_openai(self, prompt: str) -> str:
         if not self.client:
             return "Architect not configured (missing API key or openai package)."
@@ -276,3 +305,70 @@ class Architect:
             return response["message"]["content"]
         except Exception as e:
             return f"Error refining issue (Ollama): {str(e)}"
+
+    async def _deduplicate_openai(self, prompt: str) -> str:
+        if not self.client:
+            return "Architect not configured (missing API key or openai package)."
+
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a precise technical architect. Output only valid JSON.",
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                response_format={"type": "json_object"},
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            return f"Error deduplicating issues (OpenAI): {str(e)}"
+
+    async def _deduplicate_google(self, prompt: str) -> str:
+        if not self.google_model:
+            return "Architect not configured (missing API key or google-generativeai package)."
+
+        try:
+            response = await self.google_model.generate_content_async(
+                contents=[prompt],
+                generation_config={"response_mime_type": "application/json"},
+            )
+            return response.text
+        except Exception as e:
+            return f"Error deduplicating issues (Gemini): {str(e)}"
+
+    async def _deduplicate_anthropic(self, prompt: str) -> str:
+        if not self.client:
+            return "Architect not configured (missing API key or anthropic package)."
+
+        try:
+            response = await self.client.messages.create(
+                model=self.model,
+                max_tokens=4096,
+                system="You are a precise technical architect. Output only valid JSON.",
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return response.content[0].text
+        except Exception as e:
+            return f"Error deduplicating issues (Anthropic): {str(e)}"
+
+    async def _deduplicate_ollama(self, prompt: str) -> str:
+        if not self.client:
+            return "Architect not configured (missing ollama package)."
+        try:
+            response = await self.client.chat(
+                model=self.model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a precise technical architect. Output only valid JSON.",
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                format="json",
+            )
+            return response["message"]["content"]
+        except Exception as e:
+            return f"Error deduplicating issues (Ollama): {str(e)}"

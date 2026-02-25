@@ -1,10 +1,11 @@
-name: Publish Agent Issues
+name: Agent Issue Triage and Publish
 
 on:
   push:
+    branches:
+      - staging
     paths:
       - '.github/issues/*.md'
-  workflow_call:
   workflow_dispatch:
 
 concurrency:
@@ -16,7 +17,7 @@ permissions:
   issues: write
 
 jobs:
-  publish-issues:
+  triage-and-publish:
     runs-on: ubuntu-latest
     steps:
       - name: Configure Git default branch
@@ -57,7 +58,7 @@ jobs:
         run: |
           pip install -r requirements.txt
 
-      - name: Create Issues on Upstream
+      - name: Triage and Publish Issues
         if: steps.auth.outputs.enabled == 'true'
         env:
           GH_TOKEN: ${{ steps.auth.outputs.token_to_use == 'upstream' && secrets.UPSTREAM_PR_TOKEN || secrets.GITHUB_TOKEN }}
@@ -70,6 +71,15 @@ jobs:
         run: |
           set -euo pipefail
           source scripts/triage-lib.sh
+
+          # Run deduplication before processing individual files
+          # This merges similar findings into single coherent documents
+          if [[ "${TRIAGE_AGENTS:-}" == *"architect"* ]]; then
+             echo "Running architectural deduplication..."
+             python3 scripts/triage_deduplicate.py || echo "Warning: Deduplication script failed, proceeding with individual processing."
+          else
+             echo "Skipping deduplication (architect not enabled in TRIAGE_AGENTS)"
+          fi
 
           shopt -s nullglob
           for file in .github/issues/*.md; do
