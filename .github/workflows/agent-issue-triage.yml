@@ -1,10 +1,11 @@
-name: Publish Agent Issues
+name: Agent Issue Triage and Publish
 
 on:
   push:
+    branches:
+      - staging
     paths:
       - '.github/issues/*.md'
-  workflow_call:
   workflow_dispatch:
 
 concurrency:
@@ -16,7 +17,7 @@ permissions:
   issues: write
 
 jobs:
-  publish-issues:
+  triage-and-publish:
     runs-on: ubuntu-latest
     steps:
       - name: Configure Git default branch
@@ -57,7 +58,16 @@ jobs:
         run: |
           pip install -r requirements.txt
 
-      - name: Create Issues on Upstream
+      - name: Deduplicate Issues
+        if: steps.auth.outputs.enabled == 'true'
+        env:
+          DUCKY_API_KEY: ${{ secrets.DUCKY_API_KEY }}
+          DUCKY_MODEL: ${{ vars.DUCKY_MODEL }}
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          python3 scripts/deduplicate_issues.py
+
+      - name: Triage and Publish Issues
         if: steps.auth.outputs.enabled == 'true'
         env:
           GH_TOKEN: ${{ steps.auth.outputs.token_to_use == 'upstream' && secrets.UPSTREAM_PR_TOKEN || secrets.GITHUB_TOKEN }}

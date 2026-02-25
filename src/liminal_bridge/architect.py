@@ -151,6 +151,41 @@ class Architect:
         else:
             return await self._refine_openai(prompt)
 
+    async def deduplicate_issues(self, issue_summaries: str) -> str:
+        """
+        Analyzes a list of issue summaries to identify and merge duplicates.
+        """
+        prompt = f"""
+        You are an expert triage agent.
+        Your task is to identify duplicate or highly overlapping issues from the provided list.
+
+        Input Format:
+        A JSON list of objects, each containing 'filename' and 'content' (summary).
+
+        {issue_summaries}
+
+        Task:
+        1. Identify groups of issues that describe the same underlying problem or feature.
+        2. For each group, select one "target" issue (the most comprehensive one) and list the others as "duplicates" to be merged into it.
+        3. Return a JSON object with a 'duplicates' key. The value should be a list of merge operations.
+           Each operation should have:
+           - 'keep': filename of the issue to keep.
+           - 'merge': list of filenames to merge into the kept issue (and then delete).
+           - 'reason': brief explanation.
+
+        If no duplicates are found, return {{ "duplicates": [] }}.
+        Output ONLY valid JSON.
+        """
+
+        if self.provider == "google":
+            return await self._consult_google(prompt)
+        elif self.provider == "anthropic":
+            return await self._consult_anthropic(prompt)
+        elif self.provider == "ollama":
+            return await self._consult_ollama(prompt)
+        else:
+            return await self._consult_openai(prompt)
+
     async def _consult_openai(self, prompt: str) -> str:
         if not self.client:
             return "Architect not configured (missing API key or openai package)."
