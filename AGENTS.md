@@ -17,6 +17,12 @@ Instead, document these findings by creating a follow-up issue on the **upstream
 
 An automated GitHub Actions workflow can pick up `.md` files pushed to `.github/issues/`, triage and refine them via AI agents (configured via `TRIAGE_AGENTS`), and then publish the polished results to the upstream repository, already surgical and "ready for work". Every published issue is also logged in `meta/DISCOVERIES.md` to maintain a permanent record of the repository's evolution. This requires `UPSTREAM_PR_TOKEN` to be set in your fork secrets. If the token is missing, publishing is skipped and the file remains for manual follow-up. Please do not use `gh issue create` directly.
 
+### Interacting with Periodic App Reviews
+The repository runs an automated workflow (`periodic-app-review.yml`) that periodically aggregates system state (`TODO.md`, `meta/DISCOVERIES.md`, and real-time swarm metrics) and uses the `Architect` to generate a structured review report.
+- These reports are saved in `docs/reviews/` (e.g., `app_review_YYYY-MM-DD.md`).
+- **For Agents**: You should occasionally read the latest report in `docs/reviews/` to understand current technical debt, bottlenecks, and prioritized next steps. If a high-priority item is identified in the report, consider creating a specific follow-up issue in `.github/issues/` to address it.
+- **For Humans**: Review these reports to gain a high-level executive summary of the swarm's recent progress and architectural health.
+
 ## 2. Ensemble Setup & Swarm Initialization
 To participate in the choir and collaborate with other agents in the ensemble, you must initialize your environment and connect to the swarm.
 

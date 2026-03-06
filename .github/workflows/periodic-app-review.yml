@@ -1,0 +1,47 @@
+name: Periodic App Review
+
+on:
+  schedule:
+    - cron: '0 0 * * 0' # Run weekly on Sundays at midnight UTC
+  workflow_dispatch: # Allow manual triggering
+
+permissions:
+  contents: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Generate App Review Report
+        env:
+          DUCKY_API_KEY: ${{ secrets.DUCKY_API_KEY }}
+          DUCKY_MODEL: ${{ vars.DUCKY_MODEL || 'gpt-4o' }}
+        run: |
+          python3 scripts/app_review.py
+
+      - name: Commit and Push Report
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git add docs/reviews/
+          if ! git diff --staged --quiet; then
+            git commit -m "docs: add periodic app review report [skip ci]"
+            git push origin "HEAD:${GITHUB_REF#refs/heads/}"
+          else
+            echo "No changes to commit."
+          fi
