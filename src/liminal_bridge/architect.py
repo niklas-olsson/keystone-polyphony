@@ -208,6 +208,38 @@ class Architect:
         else:
             return await self._refine_openai(prompt)
 
+    async def review_app(self, codebase_metrics: Dict[str, Any]) -> str:
+        """
+        Conducts a periodic review of the application based on aggregated metrics.
+        Returns a structured Markdown report.
+        """
+        prompt = f"""
+        You are an expert Principal Engineer and System Reviewer.
+        Your task is to analyze the following aggregated metrics and recent activities
+        of our system to generate a comprehensive, structured Markdown review report.
+
+        Aggregated Data:
+        {json.dumps(codebase_metrics, indent=2)}
+
+        Requirements for the Review Report:
+        1. **Executive Summary**: A brief overview of the system's current health and recent progress.
+        2. **Technical Debt & Bottlenecks**: Identify any lingering issues or architectural bottlenecks based on the TODOs and recent discoveries.
+        3. **Unhandled Edge Cases**: Highlight any potential edge cases or missing test coverage implied by the data.
+        4. **Proposed Next Steps**: A prioritized list of actionable recommendations for the swarm or human engineers.
+        5. **Format**: Return ONLY valid Markdown content. Do not wrap in JSON.
+
+        Generate the Markdown Review Report:
+        """
+
+        if self.provider == "google":
+            return await self._refine_google(prompt)
+        elif self.provider == "anthropic":
+            return await self._refine_anthropic(prompt)
+        elif self.provider == "ollama":
+            return await self._refine_ollama(prompt)
+        else:
+            return await self._refine_openai(prompt)
+
     @property
     def is_configured(self) -> bool:
         return bool(self.client or self.provider == "google")
