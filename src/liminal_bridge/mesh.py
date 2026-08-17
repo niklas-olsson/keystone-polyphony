@@ -632,10 +632,6 @@ class LiminalMesh:
 
     async def broadcast(self, payload: Any, urgency: str = "low"):
         """Broadcasts a payload to all peers."""
-        # TODO: Implement multi-modal transport switching.
-        # High urgency or Macro-level updates (>5m) should potentially use MQTT/5G.
-        # Micro-level updates (<1m) should prioritize BLE or Visual status.
-        # Current implementation defaults all to Hyperswarm (DHT).
 
         # Attach origin info
         payload["origin"] = self.node_id
@@ -654,10 +650,26 @@ class LiminalMesh:
         # Sign the encrypted data
         signature = self.private_key.sign(encrypted_data.encode())
 
-        await self._send_to_sidecar(
-            "broadcast",
-            {"e": encrypted_data, "s": signature.hex(), "p": self.public_key_hex},
-        )
+        msg = {"e": encrypted_data, "s": signature.hex(), "p": self.public_key_hex}
+
+        max_dist = max(self.peer_distances.values()) if self.peer_distances else 0.0
+
+        if urgency == "high" or max_dist > 5.0:
+            await self._send_via_mqtt(msg)
+        elif max_dist < 1.0 and self.peer_distances:
+            await self._send_via_ble(msg)
+        else:
+            await self._send_to_sidecar("broadcast", msg)
+
+    async def _send_via_mqtt(self, payload: Dict[str, Any]):
+        """Stub for MQTT/5G transport."""
+        print("Routing via MQTT/5G transport...")
+        await self._send_to_sidecar("broadcast", payload)
+
+    async def _send_via_ble(self, payload: Dict[str, Any]):
+        """Stub for BLE/Visual transport."""
+        print("Routing via BLE/Visual transport...")
+        await self._send_to_sidecar("broadcast", payload)
 
     def _increment_clock(self):
         """Increments the local logical clock."""
