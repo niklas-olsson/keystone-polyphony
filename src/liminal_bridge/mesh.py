@@ -34,6 +34,9 @@ class LiminalMesh:
         swarm_seed: Optional[str] = None,
         snapshot_path: str = ".liminal/snapshot.json",
         snapshot_interval: int = 300,
+        mqtt_host: Optional[str] = None,
+        mqtt_port: int = 1883,
+        ble_enabled: bool = False,
     ):
         self.secret_key = secret_key
         # Generate topic hash for the swarm
@@ -109,6 +112,20 @@ class LiminalMesh:
 
         # Pending lock requests
         self._lock_requests: Dict[str, asyncio.Future] = {}
+
+        # Transport settings
+        self.mqtt_host = mqtt_host
+        self.mqtt_port = mqtt_port
+        self.ble_enabled = ble_enabled
+        self._mqtt_task: Optional[asyncio.Task] = None
+        self._ble_task: Optional[asyncio.Task] = None
+
+        self._mqtt_client = None
+
+        # BLE Server specific attributes
+        self._ble_server = None
+        self._ble_characteristic_uuid = f"0000{self.topic[:4]}-0000-1000-8000-00805f9b34fb"
+        self._ble_service_uuid = f"{self.topic[:8]}-{self.topic[8:12]}-{self.topic[12:16]}-{self.topic[16:20]}-{self.topic[20:32]}"
 
         # Callbacks for Pulse
         self.on_baton_release: Optional[Callable[[str, str], Awaitable[None]]] = None
@@ -463,6 +480,14 @@ class LiminalMesh:
         # Start idle detection task
         self._idle_task = asyncio.create_task(self._periodic_idle_check())
 
+        # Start MQTT Listener if configured
+        if self.mqtt_host:
+            self._mqtt_task = asyncio.create_task(self._mqtt_listener())
+
+        # Start BLE Listener if configured
+        if self.ble_enabled:
+            self._ble_task = asyncio.create_task(self._ble_listener())
+
         # Broadcast initial state (so dashboard sees us)
         asyncio.create_task(self.broadcast_network_state())
 
@@ -475,6 +500,45 @@ class LiminalMesh:
         print(
             f"LiminalMesh started. Node ID: {self.node_id}. Topic: {self.topic[:8]}..."
         )
+
+    async def _mqtt_listener(self):
+        """Background task that listens to MQTT broker for macro messages."""
+        if not self.mqtt_host:
+            return
+
+        while self.running:
+            try:
+                import aiomqtt
+                async with aiomqtt.Client(hostname=self.mqtt_host, port=self.mqtt_port) as client:
+                    self._mqtt_client = client
+                    topic_sub = f"keystone/{self.topic}/macro"
+                    await client.subscribe(topic_sub)
+                    print(f"Subscribed to MQTT topic: {topic_sub}")
+
+                    async for message in client.messages:
+                        if not self.running:
+                            break
+                        try:
+                            msg_str = message.payload.decode()
+                            msg_dict = json.loads(msg_str)
+                            # Wrap it to simulate sidecar format for handle_message
+                            if "e" in msg_dict and "s" in msg_dict and "p" in msg_dict:
+                                # A bit hacky, but derive peer_id from p to conform to handle_message
+                                derived_peer_id = hashlib.sha256(bytes.fromhex(msg_dict["p"])).hexdigest()[:16]
+                                wrapped_msg = {
+                                    "type": "message",
+                                    "peer_id": derived_peer_id,
+                                    "payload": msg_dict
+                                }
+                                await self._handle_message(wrapped_msg)
+                        except Exception as e:
+                            print(f"Error parsing incoming MQTT message: {e}")
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                print(f"MQTT listener error: {e}. Retrying in 5 seconds...")
+                self._mqtt_client = None
+                await asyncio.sleep(5)
 
     async def restart_sidecar(self):
         """Restarts the Node.js sidecar after a failure."""
@@ -537,12 +601,20 @@ class LiminalMesh:
         """Stops the sidecar."""
         self.running = False
 
+        if self._ble_server:
+            try:
+                await self._ble_server.stop()
+            except Exception:
+                pass
+
         # Cancel all background tasks
         tasks_to_cancel = [
             self._snapshot_task,
             self._monitor_task,
             self._idle_task,
             self._gossip_task,
+            self._mqtt_task,
+            self._ble_task,
         ]
 
         for task in tasks_to_cancel:
@@ -663,9 +735,106 @@ class LiminalMesh:
         encrypted_data = self._encrypt(payload)
         signature = self.private_key.sign(encrypted_data.encode())
         msg = {"e": encrypted_data, "s": signature.hex(), "p": self.public_key_hex}
-        # Placeholder for actual MQTT/5G client integration
-        # For now, default to hyperswarm by sending 'broadcast' to sidecar
+
+        if self.mqtt_host:
+            try:
+                if getattr(self, "_mqtt_client", None):
+                    # Reuse existing client connection
+                    await self._mqtt_client.publish(f"keystone/{self.topic}/macro", json.dumps(msg).encode())
+                    return
+                else:
+                    # Fallback to creating a one-off connection if background task failed
+                    import aiomqtt
+                    async with aiomqtt.Client(hostname=self.mqtt_host, port=self.mqtt_port) as client:
+                        await client.publish(f"keystone/{self.topic}/macro", json.dumps(msg).encode())
+                        return
+            except Exception as e:
+                print(f"Warning: MQTT broadcast failed, falling back to Hyperswarm: {e}")
+
+        # Default fallback to hyperswarm by sending 'broadcast' to sidecar
         await self._send_to_sidecar("broadcast", msg)
+
+    async def _ble_listener(self):
+        """Background task that starts a BLE GATT Server via bless and periodically scans via bleak."""
+        if not self.ble_enabled:
+            return
+
+        try:
+            import bleak
+            import bless
+            from bless import BlessServer, BlessGATTCharacteristic, GATTCharacteristicProperties, GATTAttributePermissions
+        except ImportError:
+            print("Error: 'bleak' or 'bless' module not installed for BLE. BLE Listener disabled.")
+            return
+
+        # Start Bless GATT Server
+        server_name = f"K-Polyphony"
+
+        def read_request(characteristic):
+            # When another node reads this, give them our last state or an empty payload.
+            # In a true push system, they write to us, not read from us.
+            return b"{}"
+
+        def write_request(characteristic, value):
+            try:
+                msg_str = value.decode()
+                msg_dict = json.loads(msg_str)
+                if "e" in msg_dict and "s" in msg_dict and "p" in msg_dict:
+                    derived_peer_id = hashlib.sha256(bytes.fromhex(msg_dict["p"])).hexdigest()[:16]
+                    wrapped_msg = {
+                        "type": "message",
+                        "peer_id": derived_peer_id,
+                        "payload": msg_dict
+                    }
+                    asyncio.create_task(self._handle_message(wrapped_msg))
+            except Exception as e:
+                print(f"Error parsing incoming BLE message: {e}")
+
+        try:
+            loop = asyncio.get_running_loop()
+            self._ble_server = BlessServer(name=server_name, loop=loop)
+            self._ble_server.read_request_func = read_request
+            self._ble_server.write_request_func = write_request
+
+            await self._ble_server.add_new_service(self._ble_service_uuid)
+
+            char_flags = GATTCharacteristicProperties.read | GATTCharacteristicProperties.write | GATTCharacteristicProperties.indicate
+            permissions = GATTAttributePermissions.readable | GATTAttributePermissions.writeable
+
+            await self._ble_server.add_new_characteristic(
+                self._ble_service_uuid,
+                self._ble_characteristic_uuid,
+                char_flags,
+                None,
+                permissions,
+            )
+
+            await self._ble_server.start()
+            print(f"BLE GATT Server started. Advertising Service: {self._ble_service_uuid}")
+        except Exception as e:
+            print(f"Failed to start BLE GATT Server: {e}")
+            self._ble_server = None
+
+        # Periodically Scan for other Swarm peers (Bleak Client side of listener)
+        while self.running:
+            try:
+                # We do not connect here; broadcast_micro handles connection and writing.
+                # The scan just keeps discovery active.
+                def callback(device, advertisement_data):
+                    if self._ble_service_uuid.lower() in [str(u).lower() for u in advertisement_data.service_uuids]:
+                        # We found someone in our swarm!
+                        pass
+
+                scanner = bleak.BleakScanner(detection_callback=callback)
+                await scanner.start()
+                await asyncio.sleep(30.0)
+                await scanner.stop()
+                await asyncio.sleep(30.0)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                print(f"BLE scanner error: {e}")
+                await asyncio.sleep(30)
 
     async def broadcast_micro(self, payload: Any):
         """Routes low urgency messages via micro transport (e.g., BLE/Visual).
@@ -673,8 +842,36 @@ class LiminalMesh:
         encrypted_data = self._encrypt(payload)
         signature = self.private_key.sign(encrypted_data.encode())
         msg = {"e": encrypted_data, "s": signature.hex(), "p": self.public_key_hex}
-        # Placeholder for actual BLE/Visual client integration
-        # For now, default to hyperswarm by sending 'broadcast' to sidecar
+
+        if self.ble_enabled:
+            success = False
+            try:
+                import bleak
+                msg_bytes = json.dumps(msg).encode()
+
+                # Scan for a short time to find a peer
+                devices = await bleak.BleakScanner.discover(timeout=3.0)
+                target_device = None
+                for d in devices:
+                    # Note: on macOS service_uuids might be empty unless connected,
+                    # but we'll try to match it if present.
+                    if self._ble_service_uuid.lower() in [str(u).lower() for u in d.metadata.get('uuids', [])]:
+                        target_device = d
+                        break
+
+                if target_device:
+                    # Connect and Write
+                    async with bleak.BleakClient(target_device) as client:
+                        await client.write_gatt_char(self._ble_characteristic_uuid, msg_bytes, response=True)
+                        success = True
+                        return # Sent successfully via BLE
+            except Exception as e:
+                print(f"Warning: BLE micro broadcast failed, falling back to Hyperswarm: {e}")
+
+            if success:
+                return
+
+        # Default fallback to hyperswarm by sending 'broadcast' to sidecar
         await self._send_to_sidecar("broadcast", msg)
 
     def _increment_clock(self):
