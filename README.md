@@ -151,6 +151,9 @@ The onboarding script (`npm run setup`) will guide you through configuring Jules
 To run the bridge manually and connect your local environment to the swarm, you need to configure the following environment variables:
 
 - `SWARM_KEY`: A shared secret string that anchors the peer discovery. All agents in the same mesh must use the same key.
+- `MQTT_HOST` (Optional): Hostname for the MQTT broker to enable Macro broadcast transport (e.g. `broker.hivemq.com`).
+- `MQTT_PORT` (Optional): Port for the MQTT broker (defaults to 1883).
+- `BLE_ENABLED` (Optional): Set to `true` to enable Micro broadcast transport via Bluetooth Low Energy (requires `bless` and `bleak`).
 - `DUCKY_API_KEY`: The API key for the Architect (LLM). This supports:
   - **OpenAI**: Use a standard `sk-...` key.
   - **Google Gemini**: Use an `AIza...` key.
