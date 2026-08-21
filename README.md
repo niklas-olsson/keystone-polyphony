@@ -22,6 +22,12 @@ The result should be welcoming to developers, artists, strategists, testers, and
 - `Polyphony`: The many voices. Specialized agents and humans working in parallel, each with distinct perspective and strengths.
 - `Mind Bridge`: The connective tissue. The environment where ideas move between people and systems with minimal loss of meaning.
 
+### Multi-Modal Transport Context
+Keystone Polyphony implements contextual network attenuation to route messages based on physical proximity and urgency, acting as a true "Mind Bridge" across diverse environments:
+- **Macro (MQTT):** For distant nodes (>5m) or high-urgency updates, the system utilizes MQTT for robust, low-latency, and wide-area publish/subscribe broadcasting.
+- **Micro (BLE):** For hyper-local nodes (<1m), the system can bridge air-gapped networks using Bluetooth Low Energy (BLE) GATT characteristics. This allows physical presence and proximity to serve as an intrinsic security parameter and enables edge-device coordination ("sneaker problem") without relying on global internet infrastructure.
+- **Fallback (Hyperswarm):** The default peer-to-peer DHT routing mesh used when specialized macro/micro transports are unavailable.
+
 ## Collaboration Model (RTOS-Inspired)
 
 One of our primary technical experiments is applying real-time operating system principles to multi-agent collaboration at scale.
