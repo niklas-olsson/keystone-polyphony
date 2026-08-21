@@ -37,7 +37,7 @@ jobs:
             -e SWARM_KEY \
             -e DUCKY_API_KEY \
             jules-liminal \
-            python src/liminal_bridge/server.py --mode=verify
+            python -m src.liminal_bridge.server --mode=verify
 
       - name: Run Swarm Anchor (Schedule)
         if: github.event_name == 'schedule'
@@ -53,4 +53,4 @@ jobs:
             -e SWARM_KEY \
             -e DUCKY_API_KEY \
             jules-liminal \
-            python src/liminal_bridge/server.py --mode=seed --timeout=300
+            python -m src.liminal_bridge.server --mode=seed --timeout=300

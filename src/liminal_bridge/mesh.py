@@ -632,10 +632,6 @@ class LiminalMesh:
 
     async def broadcast(self, payload: Any, urgency: str = "low"):
         """Broadcasts a payload to all peers."""
-        # TODO: Implement multi-modal transport switching.
-        # High urgency or Macro-level updates (>5m) should potentially use MQTT/5G.
-        # Micro-level updates (<1m) should prioritize BLE or Visual status.
-        # Current implementation defaults all to Hyperswarm (DHT).
 
         # Attach origin info
         payload["origin"] = self.node_id
@@ -648,16 +644,38 @@ class LiminalMesh:
         if "vc" not in payload:
             payload["vc"] = self.vector_clock
 
-        # Encrypt the payload before sending
+        max_dist = max(self.peer_distances.values()) if self.peer_distances else 0.0
+
+        if urgency == "high" or max_dist > 5.0:
+            await self.broadcast_macro(payload)
+        elif max_dist < 1.0 and self.peer_distances:
+            await self.broadcast_micro(payload)
+        else:
+            # Default fallback to Hyperswarm (DHT)
+            encrypted_data = self._encrypt(payload)
+            signature = self.private_key.sign(encrypted_data.encode())
+            msg = {"e": encrypted_data, "s": signature.hex(), "p": self.public_key_hex}
+            await self._send_to_sidecar("broadcast", msg)
+
+    async def broadcast_macro(self, payload: Any):
+        """Routes high urgency messages via macro transport (e.g., MQTT/5G).
+        Defaults to Hyperswarm if no macro transport is configured."""
         encrypted_data = self._encrypt(payload)
-
-        # Sign the encrypted data
         signature = self.private_key.sign(encrypted_data.encode())
+        msg = {"e": encrypted_data, "s": signature.hex(), "p": self.public_key_hex}
+        # Placeholder for actual MQTT/5G client integration
+        # For now, default to hyperswarm by sending 'broadcast' to sidecar
+        await self._send_to_sidecar("broadcast", msg)
 
-        await self._send_to_sidecar(
-            "broadcast",
-            {"e": encrypted_data, "s": signature.hex(), "p": self.public_key_hex},
-        )
+    async def broadcast_micro(self, payload: Any):
+        """Routes low urgency messages via micro transport (e.g., BLE/Visual).
+        Defaults to Hyperswarm if no micro transport is configured."""
+        encrypted_data = self._encrypt(payload)
+        signature = self.private_key.sign(encrypted_data.encode())
+        msg = {"e": encrypted_data, "s": signature.hex(), "p": self.public_key_hex}
+        # Placeholder for actual BLE/Visual client integration
+        # For now, default to hyperswarm by sending 'broadcast' to sidecar
+        await self._send_to_sidecar("broadcast", msg)
 
     def _increment_clock(self):
         """Increments the local logical clock."""
