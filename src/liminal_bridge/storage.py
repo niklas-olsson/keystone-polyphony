@@ -4,15 +4,15 @@ from typing import Optional, Dict, Any, List, Tuple
 from abc import ABC, abstractmethod
 
 # Use late import for CRDT to avoid circular dependency if needed, or import directly
-from .crdt import CRDT, LWWRegister, PNCounter, GSet, ORSet, RevisionLog
+from .crdt import CRDT, Register, PNCounter, GSet, ORSet, RevisionLog
 
 
 def deserialize_crdt(data: Any) -> CRDT:
     """Helper to deserialize JSON data into a CRDT object."""
     if isinstance(data, dict):
         crdt_type = data.get("type")
-        if crdt_type == "lww-register":
-            return LWWRegister.from_dict(data)
+        if crdt_type in ["register", "lww-register"]:
+            return Register.from_dict(data)
         elif crdt_type == "pn-counter":
             return PNCounter.from_dict(data)
         elif crdt_type == "g-set":
@@ -22,7 +22,7 @@ def deserialize_crdt(data: Any) -> CRDT:
         elif crdt_type == "revision-log":
             return RevisionLog.from_dict(data)
     # Default fallback for backwards compatibility
-    return LWWRegister.from_dict(data)
+    return Register.from_dict(data)
 
 
 class BaseStorageProvider(ABC):

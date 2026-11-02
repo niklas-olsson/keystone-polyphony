@@ -1,4 +1,4 @@
-from src.liminal_bridge.crdt import LWWRegister, PNCounter, GSet, ORSet, compare_vcs
+from src.liminal_bridge.crdt import Register, PNCounter, GSet, ORSet, compare_vcs
 
 
 def test_compare_vcs():
@@ -28,24 +28,24 @@ def test_compare_vcs():
 
 def test_lww_register_merge():
     # Scenario 1: Causality
-    r1 = LWWRegister("old", 100, "A", {"A": 1})
-    r2 = LWWRegister("new", 100, "B", {"A": 2})  # causally after r1
+    r1 = Register("old", 100, "A", {"A": 1})
+    r2 = Register("new", 100, "B", {"A": 2})  # causally after r1
 
     r1.merge(r2)
     assert r1.value() == "new"
     assert r1.vc == {"A": 2}
 
     # Scenario 2: Concurrent (timestamp wins)
-    r1 = LWWRegister("val1", 100, "A", {"A": 1})
-    r2 = LWWRegister("val2", 200, "B", {"B": 1})  # concurrent
+    r1 = Register("val1", 100, "A", {"A": 1})
+    r2 = Register("val2", 200, "B", {"B": 1})  # concurrent
 
     r1.merge(r2)
     assert r1.value() == "val2"
     assert r1.timestamp == 200
 
     # Scenario 3: Concurrent (timestamp tie, origin wins)
-    r1 = LWWRegister("valA", 100, "A", {"A": 1})
-    r2 = LWWRegister("valB", 100, "B", {"B": 1})  # concurrent
+    r1 = Register("valA", 100, "A", {"A": 1})
+    r2 = Register("valB", 100, "B", {"B": 1})  # concurrent
 
     # B > A
     r1.merge(r2)
@@ -53,8 +53,8 @@ def test_lww_register_merge():
     assert r1.origin == "B"
 
     # Reverse merge
-    r1 = LWWRegister("valA", 100, "A", {"A": 1})
-    r2 = LWWRegister("valB", 100, "B", {"B": 1})  # concurrent
+    r1 = Register("valA", 100, "A", {"A": 1})
+    r2 = Register("valB", 100, "B", {"B": 1})  # concurrent
 
     r2.merge(r1)  # r1 (A) < r2 (B)
     assert r2.value() == "valB"
@@ -132,9 +132,9 @@ def test_or_set():
 
 def test_serialization():
     # LWW
-    r = LWWRegister("test", 123.456, "node1", {"node1": 1})
+    r = Register("test", 123.456, "node1", {"node1": 1})
     d = r.to_dict()
-    r2 = LWWRegister.from_dict(d)
+    r2 = Register.from_dict(d)
     assert r2.value() == r.value()
     assert r2.vc == r.vc
 

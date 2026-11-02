@@ -65,11 +65,12 @@ def compare_vcs(vc1: Dict[str, int], vc2: Dict[str, int]) -> int:
     return 0
 
 
-class LWWRegister(CRDT):
+class Register(CRDT):
     """
-    Last-Write-Wins Register.
-    Uses Vector Clocks for causal ordering, timestamps for concurrency resolution,
-    and Origin Node ID as a final tie-breaker.
+    Register CRDT with pluggable tiebreaker logic.
+    Uses Vector Clocks for causal ordering.
+    If concurrent, uses a provided resolve function, or falls back to
+    timestamps for concurrency resolution, and Origin Node ID as a final tie-breaker.
     """
 
     def __init__(self, value: Any, timestamp: float, origin: str, vc: Dict[str, int]):
@@ -78,9 +79,24 @@ class LWWRegister(CRDT):
         self.origin = origin
         self.vc = vc
 
-    def merge(self, other: "LWWRegister") -> "LWWRegister":
-        if not isinstance(other, LWWRegister):
-            raise ValueError("Cannot merge with non-LWWRegister")
+    def _lww(self, other: "Register"):
+        # Legacy LWW tie-break using timestamp and origin
+        if other.timestamp > self.timestamp:
+            self._value = other._value
+            self.timestamp = other.timestamp
+            self.origin = other.origin
+            self.vc = other.vc
+        elif other.timestamp == self.timestamp:
+            if other.origin > self.origin:
+                self._value = other._value
+                self.timestamp = other.timestamp
+                self.origin = other.origin
+                self.vc = other.vc
+        return self
+
+    def merge(self, other: "Register", *, resolve=None) -> "Register":
+        if not isinstance(other, Register):
+            raise ValueError("Cannot merge with non-Register")
 
         cmp = compare_vcs(self.vc, other.vc)
 
@@ -92,19 +108,20 @@ class LWWRegister(CRDT):
             self.vc = other.vc
         elif cmp == 0:
             # Concurrent or equal
-            # Tie-break using timestamp
-            if other.timestamp > self.timestamp:
-                self._value = other._value
-                self.timestamp = other.timestamp
-                self.origin = other.origin
-                self.vc = other.vc
-            elif other.timestamp == self.timestamp:
-                # Tie-break using origin
-                if other.origin > self.origin:
-                    self._value = other._value
-                    self.timestamp = other.timestamp
+            if resolve:
+                winner_val = resolve(self.value(), other.value())
+                self._value = winner_val
+                # Deterministically advance metadata past both
+                if other.timestamp > self.timestamp or (other.timestamp == self.timestamp and other.origin > self.origin):
                     self.origin = other.origin
-                    self.vc = other.vc
+                self.timestamp = max(self.timestamp, other.timestamp)
+                # Point-wise max of vector clocks
+                merged_vc = dict(self.vc)
+                for k, v in other.vc.items():
+                    merged_vc[k] = max(merged_vc.get(k, 0), v)
+                self.vc = merged_vc
+            else:
+                self._lww(other)
 
         # If cmp == 1 (self is newer), do nothing
         return self
@@ -114,7 +131,7 @@ class LWWRegister(CRDT):
 
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "type": "lww-register",
+            "type": "register",
             "value": self._value,
             "timestamp": self.timestamp,
             "origin": self.origin,
@@ -122,7 +139,7 @@ class LWWRegister(CRDT):
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "LWWRegister":
+    def from_dict(cls, data: Dict[str, Any]) -> "Register":
         return cls(
             value=data["value"],
             timestamp=data["timestamp"],
@@ -340,3 +357,7 @@ class RevisionLog(CRDT):
     def from_dict(cls, data: Dict[str, Any]) -> "RevisionLog":
         revisions = {tuple(x) for x in data.get("revisions", [])}
         return cls(revisions=revisions)
+
+
+# Backwards compatibility alias
+LWWRegister = Register

@@ -35,8 +35,8 @@ RUN cd src/liminal_bridge/sidecar && npm install
 COPY . .
 
 # Set environment variables
-ENV PYTHONPATH=/app/src
+ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
 # Default command: Run the MCP server
-CMD ["python", "src/liminal_bridge/server.py"]
+CMD ["python", "-m", "src.liminal_bridge.server"]

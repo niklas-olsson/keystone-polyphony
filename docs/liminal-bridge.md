@@ -33,8 +33,8 @@ graph TD
 ### Component Responsibilities
 
 - `src/liminal_bridge/server.py`: exposes MCP tools and manages run modes (`mcp` and `seed`).
-- `src/liminal_bridge/mesh.py`: in-memory shared state, message handling, lock behavior.
-- `src/liminal_bridge/sidecar/bridge.js`: peer discovery and peer message transport through Hyperswarm.
+- `src/liminal_bridge/mesh.py`: in-memory shared state, message handling, lock behavior, and multi-modal transport switching (MQTT, BLE).
+- `src/liminal_bridge/sidecar/bridge.js`: peer discovery and peer message transport through Hyperswarm (used as a fallback and default routing).
 - `src/liminal_bridge/pulse.py`: controlled trigger path for planner consultation.
 - `src/liminal_bridge/architect.py`: optional LLM-backed planner (`DUCKY_API_KEY`, `DUCKY_MODEL`).
 
@@ -52,10 +52,17 @@ Important: these stores are process-local and ephemeral. They are not persisted 
 
 ## Wire Protocol
 
-Messages are line-delimited JSON. Every outbound broadcast from Python adds:
+Messages are JSON objects. For multi-modal routing, `LiminalMesh.broadcast()` determines the transport:
+- **Macro (MQTT):** Routes via `broadcast_macro` if urgency is high or distance > 5.0m. Requires `MQTT_HOST` configured.
+- **Micro (BLE):** Routes via `broadcast_micro` using GATT characteristics if distance < 1.0m. Requires `BLE_ENABLED=true`.
+- **Fallback (Hyperswarm):** Sent to the Node.js sidecar via stdin as line-delimited JSON if other transports fail or aren't configured.
+
+Every outbound broadcast from Python adds:
 
 - `origin`: sender node id.
 - `timestamp`: sender wall-clock timestamp.
+- `urgency`: urgency flag used for transport attenuation.
+- `vc`: current vector clock state.
 
 Application payload message types:
 

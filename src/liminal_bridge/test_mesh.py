@@ -1,3 +1,4 @@
+from src.liminal_bridge.storage import SQLiteStorageProvider
 import pytest
 import asyncio
 import json
@@ -10,13 +11,13 @@ def mesh(tmp_path):
     """Fixture to create a LiminalMesh with temporary DB and Identity."""
     db = tmp_path / "test.db"
     identity = tmp_path / "test.pem"
-    mesh = LiminalMesh("test-secret", db_path=str(db), identity_path=str(identity))
+    mesh = LiminalMesh("test-secret", storage_provider=SQLiteStorageProvider(str(db)), identity_path=str(identity))
     mesh.broadcast = AsyncMock()
     yield mesh
     # Cleanup is handled by tmp_path, but stop() closes DB connection
     # Since we don't start() the mesh in these unit tests, stop() isn't strictly needed for process
     # but good to close DB connection if needed.
-    if mesh.conn:
+    if hasattr(mesh, "conn") and mesh.conn:
         mesh.conn.close()
 
 
@@ -73,7 +74,7 @@ async def test_snapshot_creation(tmp_path):
 
     mesh = LiminalMesh(
         "test-secret",
-        db_path=str(db),
+        storage_provider=SQLiteStorageProvider(str(db)),
         identity_path=str(identity),
         snapshot_path=str(snapshot),
     )
@@ -106,7 +107,7 @@ async def test_periodic_snapshot_task(tmp_path):
     # Set a very short interval
     mesh = LiminalMesh(
         "test-secret",
-        db_path=str(db),
+        storage_provider=SQLiteStorageProvider(str(db)),
         identity_path=str(identity),
         snapshot_path=str(snapshot),
         snapshot_interval=0.1,

@@ -2,7 +2,7 @@ import pytest
 from unittest.mock import AsyncMock
 from src.liminal_bridge.mesh import LiminalMesh
 from src.liminal_bridge.storage import SQLiteStorageProvider
-from src.liminal_bridge.crdt import LWWRegister, PNCounter, ORSet
+from src.liminal_bridge.crdt import Register, PNCounter, ORSet
 
 
 @pytest.fixture
@@ -33,7 +33,7 @@ def mesh_b(tmp_path):
 
 @pytest.mark.asyncio
 async def test_update_kv_lww(mesh_a):
-    """Test standard KV update uses LWWRegister."""
+    """Test standard KV update uses Register."""
     await mesh_a.update_kv("key1", "value1")
 
     val = mesh_a.get_kv("key1")
@@ -41,7 +41,7 @@ async def test_update_kv_lww(mesh_a):
 
     # Check internal storage type
     internal = mesh_a.kv_store["key1"]
-    assert isinstance(internal, LWWRegister)
+    assert isinstance(internal, Register)
     assert internal.value() == "value1"
 
 

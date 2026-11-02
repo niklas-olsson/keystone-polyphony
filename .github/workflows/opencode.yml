@@ -46,7 +46,7 @@ jobs:
          contains(github.event.pull_request.labels.*.name, 'arch-review') ||
          contains(github.event.pull_request.labels.*.name, 'security-review'))) ||
        (github.event_name == 'workflow_dispatch'))
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
       REPO: ${{ github.repository }}
@@ -67,13 +67,10 @@ jobs:
       issues: write
       pull-requests: write
     steps:
-      - name: Checkout repository
+      - name: Checkout trusted base repository
         uses: actions/checkout@v4
         with:
-          # Explicitly reference the head repository for forks to ensure checkout succeeds.
-          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
-          # For pull_request_target, we want the PR's head code.
-          ref: ${{ github.event.pull_request.head.sha || (github.event.issue.pull_request && format('refs/pull/{0}/head', github.event.issue.number)) || github.sha }}
+          ref: ${{ github.base_ref || github.event.pull_request.base.ref }}
           fetch-depth: 1
           persist-credentials: false
 
@@ -181,6 +178,13 @@ jobs:
           echo "EOF" >> "$GITHUB_OUTPUT"
           echo "model_input=$MODEL_INPUT" >> "$GITHUB_OUTPUT"
           echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+
+      - name: Extract PR diff securely
+        if: steps.prep.outputs.pr_number != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr diff ${{ steps.prep.outputs.pr_number }} > pr_patch.diff
 
       - name: Resolve Review CLI Config
         id: resolve
@@ -312,6 +316,9 @@ jobs:
           fi
 
           printf "%s\n" "${{ steps.prep.outputs.prompt }}" > "$PROMPT_FILE"
+          if [ -f pr_patch.diff ]; then
+            printf "\n\nReview the following patch:\n\`\`\`diff\n%s\n\`\`\`\n" "$(cat pr_patch.diff)" >> "$PROMPT_FILE"
+          fi
           PROMPT_CONTENT=$(cat "$PROMPT_FILE")
 
           # Resolve provider key from selected model so provider-specific CLIs can use AGENT_API_KEY.

@@ -1,3 +1,4 @@
+from src.liminal_bridge.storage import SQLiteStorageProvider
 import pytest
 import asyncio
 import hashlib
@@ -10,7 +11,7 @@ async def test_rotate_key_logic(tmp_path):
     # Setup
     db = tmp_path / "test.db"
     identity = tmp_path / "test.pem"
-    mesh = LiminalMesh("old-key", db_path=str(db), identity_path=str(identity))
+    mesh = LiminalMesh("old-key", storage_provider=SQLiteStorageProvider(str(db)), identity_path=str(identity))
 
     # Mock sidecar communication
     mesh._send_to_sidecar = AsyncMock()
@@ -53,7 +54,7 @@ async def test_rotate_key_immediate(tmp_path):
     # Setup
     db = tmp_path / "test.db"
     identity = tmp_path / "test.pem"
-    mesh = LiminalMesh("old-key", db_path=str(db), identity_path=str(identity))
+    mesh = LiminalMesh("old-key", storage_provider=SQLiteStorageProvider(str(db)), identity_path=str(identity))
 
     # Mock sidecar communication
     mesh._send_to_sidecar = AsyncMock()

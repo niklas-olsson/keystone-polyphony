@@ -49,6 +49,11 @@ IDENTITY_PATH = os.getenv("LIMINAL_IDENTITY", "identity.pem")
 STORAGE_BACKEND = os.getenv("LIMINAL_STORAGE_BACKEND", "sqlite")
 STORAGE_URL = os.getenv("LIMINAL_STORAGE_URL", None)
 
+# Transport Configuration
+MQTT_HOST = os.getenv("MQTT_HOST", None)
+MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
+BLE_ENABLED = os.getenv("BLE_ENABLED", "false").lower() == "true"
+
 
 def _create_storage_provider(
     backend: str, db_path: str, url: str
@@ -156,7 +161,12 @@ def ensure_mesh():
     if mesh is None:
         storage = _create_storage_provider(STORAGE_BACKEND, DB_PATH, STORAGE_URL)
         mesh = LiminalMesh(
-            secret_key=SWARM_KEY, storage_provider=storage, identity_path=IDENTITY_PATH
+            secret_key=SWARM_KEY,
+            storage_provider=storage,
+            identity_path=IDENTITY_PATH,
+            mqtt_host=MQTT_HOST,
+            mqtt_port=MQTT_PORT,
+            ble_enabled=BLE_ENABLED
         )
         pulse = Pulse(mesh, architect)
         mesh.on_baton_release = pulse.on_baton_release
@@ -291,8 +301,17 @@ async def register_to_swarm(github_secret: str = None) -> str:
     if github_secret and (not mesh or mesh.secret_key != github_secret):
         if mesh and mesh.running:
             await mesh.stop()
+        # We need to construct storage provider here
+        # but since DB_PATH is used directly here, let's use SQLite as default or reconstruct.
+        # Actually this uses a mock/local db for testing probably, let's adapt it:
+        storage = _create_storage_provider("sqlite", DB_PATH, None)
         mesh = LiminalMesh(
-            secret_key=github_secret, db_path=DB_PATH, identity_path=IDENTITY_PATH
+            secret_key=github_secret,
+            storage_provider=storage,
+            identity_path=IDENTITY_PATH,
+            mqtt_host=MQTT_HOST,
+            mqtt_port=MQTT_PORT,
+            ble_enabled=BLE_ENABLED
         )
         pulse = Pulse(mesh, architect)
         mesh.on_baton_release = pulse.on_baton_release
@@ -706,6 +725,9 @@ async def run_seed_mode(
         storage_provider=storage,
         identity_path=IDENTITY_PATH,
         swarm_seed=swarm_seed,
+        mqtt_host=MQTT_HOST,
+        mqtt_port=MQTT_PORT,
+        ble_enabled=BLE_ENABLED
     )
     pulse = Pulse(mesh, architect)
     mesh.on_baton_release = pulse.on_baton_release
@@ -805,6 +827,9 @@ async def run_verify_mode():
             storage_provider=storage1,
             identity_path=seed_id,
             swarm_seed=swarm_seed,
+            mqtt_host=MQTT_HOST,
+            mqtt_port=MQTT_PORT,
+            ble_enabled=BLE_ENABLED
         )
 
         # Node 2: Client
@@ -812,7 +837,12 @@ async def run_verify_mode():
         client_id = os.path.join(tmp_dir, "client.pem")
         storage2 = SQLiteStorageProvider(client_db)
         mesh2 = LiminalMesh(
-            secret_key=SWARM_KEY, storage_provider=storage2, identity_path=client_id
+            secret_key=SWARM_KEY,
+            storage_provider=storage2,
+            identity_path=client_id,
+            mqtt_host=MQTT_HOST,
+            mqtt_port=MQTT_PORT,
+            ble_enabled=BLE_ENABLED
         )
 
         print(f"Starting Node 1 (Anchor)... ID: {mesh1.node_id}")
@@ -866,11 +896,15 @@ async def run_daemon_mode(
     else:
         swarm_seed = None  # Random identity
 
+    storage = _create_storage_provider(STORAGE_BACKEND, DB_PATH, STORAGE_URL)
     mesh = LiminalMesh(
         secret_key=SWARM_KEY,
-        db_path=DB_PATH,
+        storage_provider=storage,
         identity_path=IDENTITY_PATH,
         swarm_seed=swarm_seed,
+        mqtt_host=MQTT_HOST,
+        mqtt_port=MQTT_PORT,
+        ble_enabled=BLE_ENABLED
     )
     pulse = Pulse(mesh, architect)
     mesh.on_baton_release = pulse.on_baton_release

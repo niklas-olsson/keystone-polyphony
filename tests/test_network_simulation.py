@@ -218,7 +218,7 @@ async def test_concurrent_updates_with_latency(simulator, mesh_a, mesh_b):
 
     # Concurrent updates to same key
     # A sets to "valA", B sets to "valB"
-    # LWWRegister uses wall clock. We need to control order or rely on Node IDs if timestamps equal.
+    # Register uses wall clock. We need to control order or rely on Node IDs if timestamps equal.
     # Here we just fire them and expect one to win consistently on both sides.
 
     await mesh_a.update_kv("concurrent_key", "valA")
