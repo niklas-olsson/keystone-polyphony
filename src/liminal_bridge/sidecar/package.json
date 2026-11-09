@@ -5,6 +5,7 @@
   "main": "bridge.js",
   "dependencies": {
     "hyperswarm": "^4.0.0",
+    "hyperdht": "^6.21.0",
     "b4a": "^1.6.0",
     "hypercore-crypto": "^3.0.0"
   },

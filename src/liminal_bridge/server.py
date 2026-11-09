@@ -820,7 +820,7 @@ async def run_seed_mode(
 
 # --- Verify Mode ---
 async def run_verify_mode():
-    """Runs a verification test: starts two nodes and checks if they find each other."""
+    """Verify peer discovery and messaging on an isolated local DHT."""
     print("Starting Verification Mode...")
 
     # Generate random test DB/Identity paths to avoid conflict
@@ -830,6 +830,7 @@ async def run_verify_mode():
     tmp_dir = tempfile.mkdtemp()
     print(f"Using temp dir: {tmp_dir}")
 
+    bootstrap = None
     try:
         # Node 1: Seed/Anchor
         seed_db = os.path.join(tmp_dir, "seed.db")
@@ -843,9 +844,7 @@ async def run_verify_mode():
             storage_provider=storage1,
             identity_path=seed_id,
             swarm_seed=swarm_seed,
-            mqtt_host=MQTT_HOST,
-            mqtt_port=MQTT_PORT,
-            ble_enabled=BLE_ENABLED,
+            snapshot_path=os.path.join(tmp_dir, "seed-snapshot.json"),
         )
 
         # Node 2: Client
@@ -856,10 +855,25 @@ async def run_verify_mode():
             secret_key=SWARM_KEY,
             storage_provider=storage2,
             identity_path=client_id,
-            mqtt_host=MQTT_HOST,
-            mqtt_port=MQTT_PORT,
-            ble_enabled=BLE_ENABLED,
+            snapshot_path=os.path.join(tmp_dir, "client-snapshot.json"),
         )
+
+        sidecar_dir = os.path.join(os.path.dirname(__file__), "sidecar")
+        await mesh1._ensure_sidecar_deps(sidecar_dir)
+        bootstrap = await asyncio.create_subprocess_exec(
+            "node",
+            os.path.join(sidecar_dir, "verify-bootstrap.js"),
+            stdout=asyncio.subprocess.PIPE,
+        )
+        try:
+            address = await asyncio.wait_for(bootstrap.stdout.readline(), timeout=15)
+        except asyncio.TimeoutError as exc:
+            raise RuntimeError("Local DHT bootstrap did not become ready") from exc
+        if not address:
+            raise RuntimeError("Local DHT bootstrap exited before becoming ready")
+        bootstrap_address = address.decode().strip()
+        mesh1.bootstrap = mesh2.bootstrap = bootstrap_address
+        print(f"Local DHT bootstrap: {bootstrap_address}")
 
         print(f"Starting Node 1 (Anchor)... ID: {mesh1.node_id}")
         await mesh1.start()
@@ -894,6 +908,16 @@ async def run_verify_mode():
             await mesh1.stop()
         if "mesh2" in locals() and mesh2.running:
             await mesh2.stop()
+        if bootstrap and bootstrap.returncode is None:
+            try:
+                bootstrap.terminate()
+            except ProcessLookupError:
+                pass
+            try:
+                await asyncio.wait_for(bootstrap.wait(), timeout=5)
+            except asyncio.TimeoutError:
+                bootstrap.kill()
+                await bootstrap.wait()
         shutil.rmtree(tmp_dir)
 
 

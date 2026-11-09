@@ -28,14 +28,10 @@ jobs:
 
       - name: Verify Swarm Coordination (Push)
         if: github.event_name == 'push'
-        env:
-          SWARM_KEY: ${{ secrets.SWARM_KEY }}
-          DUCKY_API_KEY: ${{ secrets.DUCKY_API_KEY }}
         run: |
           set -euo pipefail
           docker run --rm \
-            -e SWARM_KEY \
-            -e DUCKY_API_KEY \
+            -e SWARM_KEY="verification-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
             jules-liminal \
             python -m src.liminal_bridge.server --mode=verify
 

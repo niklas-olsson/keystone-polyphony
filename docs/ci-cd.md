@@ -4,6 +4,14 @@ This document outlines the automated pipelines that power the development lifecy
 
 ## Workflows Overview
 
+### Swarm verification
+
+On pushes outside `main`, `swarm-node.yml` starts an isolated loopback DHT and
+checks that two real Hyperswarm nodes discover each other and exchange a message.
+This verifies local coordination without depending on public bootstrap servers;
+it does not check public DHT reachability. The scheduled seed job still uses
+the configured swarm key and public network.
+
 ### 1. Auto-merge PR to Staging
 **Trigger:** `pull_request_target` (opened, synchronize, reopened, ready_for_review) against `main`.
 **File:** `auto-merge-staging.yml`
