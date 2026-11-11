@@ -3,10 +3,7 @@ name: Collaboration Validation
 on:
   push:
     branches:
-      - 'fix/**'
-      - 'feat/**'
-  pull_request:
-    branches: [main]
+      - 'qualification/**'
   workflow_dispatch:
 
 permissions:
