@@ -11,8 +11,8 @@ Record necessary findings on the **upstream repository** with concrete evidence,
 
 **How to record a follow-up:**
 1. Prefer updating an existing agreed issue with concrete evidence and remaining work.
-2. Create a follow-up issue only for a necessary uncovered gap. If publication is unavailable, retain a Markdown draft in `.github/issues/`.
-3. Existing drafts remain durable source files. Automatic model triage and publication have been retired; publish reviewed findings through the normal issue interface.
+2. Create a follow-up issue only for a necessary uncovered gap. If publication is unavailable, retain a Markdown draft in `.github/issue-drafts/`.
+3. Publish reviewed findings through the normal issue interface. Keep the legacy `.github/issues/` path empty while the historical queued workflow described in [CI policy](docs/ci-cd.md#historical-queued-run) remains unresolved; it could resume its old issue sweep. Historical drafts remain preserved in Git history.
 
 ## 2. Ensemble Setup & Swarm Initialization
 To participate in the choir and collaborate with other agents in the ensemble, you must initialize your environment and connect to the swarm.

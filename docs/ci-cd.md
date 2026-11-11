@@ -132,25 +132,85 @@ This does not rerun a visible failed validation or override any merge condition.
 It does not retry provider review. Manual runs from a feature branch cannot serve
 as trusted-main validation or admission evidence.
 
-## Runtime qualification and transition
+## Native runtime qualification
 
 Local required hooks, lint and tests remain required. Native transport trials,
 traffic capture and storage measurements are separate evidence from deterministic
-CI and from actual forge outcomes. They remain available in **Collaboration
-Validation** during installation of this policy. The immediately following
-focused change makes that workflow manual-only; it demonstrates the new owner
-pipeline itself and removes the duplicate per-PR suite and capture benchmark.
+CI and from actual forge outcomes. **Collaboration Validation** runs its native
+suite and measurements only when explicitly requested. Ordinary PRs and feature
+branch pushes use the deterministic admission flow without this duplicate suite
+or capture benchmark.
+
+Request native qualification on main manually:
+
+```bash
+gh workflow run collaboration-validation.yml --ref main
+```
+
+An authorized maintainer or connector can also create a branch named
+`qualification/<purpose>-<short-sha>` pointing to the exact revision to qualify.
+Only pushes to `qualification/**` trigger this workflow automatically. Use a
+revision containing this opt-in workflow definition. For example, replace both
+uppercase placeholders before publishing the qualification branch:
+
+```bash
+git push origin FULL_COMMIT_SHA:refs/heads/qualification/PURPOSE-SHORT_SHA
+```
+
+Record the run URL and actual checked-out commit with its measurement artifacts.
+Creating a qualification branch does not grant approval or admit that revision
+to main. Current-head/current-base **PR Validation** remains the admission gate.
+
+## Retired automation maintenance
 
 The retired workflows are the two legacy staging writers, decision-model
 admission, periodic promotion, duplicate CLI reviewers, issue solvers/triage,
-live decision smoke and scheduled swarm seed. Existing staging content cannot
-later promote itself through these removed paths. Historical findings and failed
-review attempts remain in PR history; their absence of usable evidence is not
-rewritten as a successful review.
+live decision smoke and scheduled swarm seed. Their definitions are removed from
+current main, so those entry points no longer start new automatic promotion or
+provider work. Historical findings and failed review attempts remain in PR
+history; their absence of usable evidence is not rewritten as a successful review.
 
-Removing a workflow file does not cancel copies already queued or running. Before
-admission in the canonical repository, the trusted controller retires active runs
-of those exact removed workflow paths and verifies their completion. Its bounded
-cleanup retains `retired-automation.json`; an unconfirmed cancellation holds
-admission for inspection and manual reconciliation. It never force-cancels an
-unrelated workflow.
+Removing a workflow file does not cancel copies already queued or running.
+Retirement is explicit maintenance and is not invoked by normal PR admission.
+To inspect and stop remaining or restarted copies of the exact retired workflows,
+run:
+
+```bash
+gh workflow run retired-automation.yml --ref main
+```
+
+**Retired Automation Maintenance** executes only trusted main in the canonical
+repository, with contents read and Actions write permission. Its existing bounded
+helper uses normal cancellation and verifies completion. It retains
+`retired-automation.json`, including observed conclusions and any incomplete
+inventory. An unconfirmed result fails that maintenance run for inspection and
+manual retry; it is never reported as successful cleanup. The maintenance job
+cannot publish repository content and does not call a provider.
+
+### Historical queued run
+
+At the November 11, 2026 UTC installation checkpoint,
+[maintenance run 43119385184](https://github.com/niklas-olsson/keystone-polyphony/actions/runs/43119385184)
+observed seed run `43118087829` already completed successfully, without a
+cancellation request. Historical periodic run
+[42527277309](https://github.com/niklas-olsson/keystone-polyphony/actions/runs/42527277309)
+remained queued with no jobs after ordinary cancellation and one force-cancel
+attempt both returned HTTP 409. It is unresolved, not reported as cancelled.
+These observations match GitHub's documented
+[abnormal workflow-run condition](https://docs.github.com/en/actions/how-tos/troubleshoot-workflows),
+which may require GitHub Support to clear. Retain the failed maintenance evidence;
+normal owner admission does not depend on indefinite repair of this platform state.
+
+At that checkpoint, main was
+`8868577f0ebf673845c6e561f6f99e44f0b6c737` and staging was
+`bc38767a320b9e3c6fd2f54d19bf9d0fd64d3ec1`. Staging was an ancestor with zero
+commits ahead of main. The old periodic workflow fetches live refs and skips
+promotion under that condition. Current main also contained no `.github/issues/`
+files, so its separate issue sweep would not invoke the old provider-backed
+triage. Use `.github/issue-drafts/` for future unpublished drafts and leave the
+legacy watched path empty; no existing draft files were moved or deleted.
+
+This is a recorded input/state boundary, not proof that the historical run can
+never resume. Deliberately advancing staging or repopulating its watched issue
+path could change its behavior. Keep the orphan visible as a maintenance/support
+limitation without treating failed cancellation as completed cleanup.
