@@ -1,132 +1,67 @@
 # Contributing to Keystone Polyphony
 
-This guide is the fastest path to making useful contributions. It applies equally to human contributors, autonomous AI agents, and any entity that can operate respectfully within the project's norms.
+Use a focused branch and open a PR to `main`. Manual PRs and autonomous
+contributors use the same GitHub workflow; no upstream PAT or staging setup is
+required.
 
-## Quick Start
+## Quick start
 
-1. Fork the repository.
-2. Run `./scripts/install-hooks.sh` once per clone to install local git hooks.
-3. Create a branch from `main`.
-4. If you run autonomous agents, complete the token setup in `Agentic Default Flow` before launching them.
-5. Make your changes and run relevant checks locally.
-6. Open a pull request to `niklas-olsson/keystone-polyphony:main` or let the agentic workflow open it.
+1. Fork or clone the repository and create a feature branch from current main.
+2. Install `requirements.txt` and the Node sidecar dependencies.
+3. Run `./scripts/install-hooks.sh` once per clone.
+4. Make a focused change, update relevant docs and run `bash scripts/lint.sh` and
+   `bash scripts/run-tests.sh`.
+5. Open a PR with the problem, resulting behavior and test evidence. Keep it draft
+   until ready, or apply `hold-merge` to pause admission.
 
-Manual PRs are always supported and require no token setup.
+Agents must also follow [AGENTS.md](AGENTS.md), including ensemble architecture
+review for significant or security-sensitive changes. Independent development
+review and truthful evidence remain useful even when a provider is unavailable.
 
-## Local Hooks (Recommended)
+## Review and merge
 
-Install hooks:
+Owner-authored ready PRs need current deterministic CI and resolution of actual
+review findings. They do not need a model review or review label. External-author
+PRs, including collaborator and bot PRs, also require the repository owner's
+approval on the current head. They receive at most one bounded advisory
+OpenRouter review per head, with no automatic retries or paid fallback.
 
-```bash
-./scripts/install-hooks.sh
-```
+The trusted controller tests and publishes the exact proposed merge into main.
+A changed head or base needs fresh qualification. It does not merge through
+staging, fabricate approvals or use a model to override failing tests. See
+[CI policy and recovery](docs/ci-cd.md) for precise identity, evidence and race
+boundaries and the manual reconciliation command.
 
-Current hook coverage:
+Respond to returned findings on the same PR. Keep pending requests separate from
+completed reviews; do not report a model failure or an unanswered request as an
+approval. Record deterministic fixtures, native runtime trials, live provider
+behavior and actual forge outcomes separately.
 
-1. `pre-commit` strips trailing spaces/tabs from **staged content only** (`.md`, `.yml`, `.yaml`, `.txt`, `.sh`). The working tree is never touched, so partial staging is safe.
-2. `pre-commit` normalizes missing EOF newline for those files.
-3. `pre-commit` runs `git diff --cached --check` and blocks commits if unresolved whitespace issues remain.
-4. `pre-commit` runs `scripts/lint.sh`. A failed lint check blocks the commit on every branch.
-5. `pre-push` runs `scripts/run-tests.sh`. A failed lint or test check blocks the push on every branch.
+## Local hooks
 
-Install the dependencies in `requirements.txt` before you run the hooks. The lint and test checks need `black`, `flake8`, and `pytest`. Do not use `--no-verify` to skip a failed check.
+The pre-commit hook normalizes trailing whitespace/newlines in staged text only,
+checks the staged diff and runs lint. The pre-push hook runs the repository health
+checks and tests. Install the dependencies first. Correct failed required checks;
+do not use `--no-verify` to bypass them.
 
-Prerequisites checked by the installer: `git`, `awk`, `mktemp`, `cmp`, `tail`.
+## Credentials and provider cost
 
-## Agentic Default Flow (Required For Autonomous Runs)
+`OPENROUTER_API_KEY` is used only by the external advisory reviewer in Actions.
+Owner CI and the merge controller need no model credential. The normal pipeline
+uses GitHub's scoped job token and no personal token. Automatic issue solving,
+AI triage, scheduled seed calls and provider smoke workflows are retired.
+Standalone runtime tools can still be used intentionally outside Actions.
 
-If you want autonomous agents to submit upstream PRs without manual intervention, do this setup first.
+Never commit credentials. Store operational credentials in Actions secrets and
+keep provider calls in the intended review boundary. Fork contributors manage
+their own credentials and should never request a maintainer's personal token.
 
-- `.github/workflows/periodic-merge-main.yml`
+## Issues and conduct
 
-1. In your fork, go to `Settings -> Secrets and variables -> Actions`.
-2. Add a secret named `UPSTREAM_PR_TOKEN`.
-3. Use a token from your own GitHub account with permission to open pull requests on `niklas-olsson/keystone-polyphony`.
-4. Choose a token type that can open upstream PRs.
-5. Option A (recommended for most external contributors): classic PAT with `public_repo`.
-6. Option B (only when your account can be granted repo access): fine-grained token targeting `niklas-olsson/keystone-polyphony` with `Pull requests: Read and write` and `Contents: Read`.
-7. If fine-grained token setup cannot target the upstream repo, use Option A or use the manual PR path.
-8. Trigger `Periodic Test and Merge to Main` once with `workflow_dispatch` to validate setup.
+Update existing agreed issues when possible. Create a follow-up only for a
+necessary uncovered gap. Existing `.github/issues/` drafts remain available, but
+are no longer automatically refined or published by a model. Publish reviewed
+findings through the normal issue interface when appropriate.
 
-Without `UPSTREAM_PR_TOKEN`, upstream PR creation is intentionally skipped. Tested promotion to your fork `main` still runs.
-
-### Repository Variables
-
-| Variable | Purpose | Default |
-|---|---|---|
-| `HOURLY_TEST_COMMAND` | The shell command run during periodic staging tests | `npm test` (if `package.json` exists) |
-| `{AGENT}_DAILY_TASKS` | Daily quota for applying a specific agent's label (e.g. `JULES_DAILY_TASKS`). Configured in `.github/reviewers.yml` | No limit (`0` or unset) |
-| `AGENT_CLI` | CLI binary name for the autonomous agent | `opencode` |
-| `AGENT_CLI_FLAGS` | Extra flags passed to the agent CLI | (empty) |
-| `AGENT_DAILY_TASKS` | Max issues attempted by agents per rolling 24h window | `5` |
-| `AGENT_MODEL` | Model identifier to pass to the agent | (empty) |
-| `ISSUE_CLOSER_LOOKBACK_DAYS` | Rolling window (days) scanned for merged PRs in the daily issue-close sweep | `30` |
-| `ISSUE_CLOSER_ALLOWED_BASE_REFS` | Comma-separated PR base branches allowed to trigger auto-close | `main,staging` |
-
-Set variables in **Settings → Secrets and variables → Actions → Variables**. Additional quota variables can be defined in `.github/reviewers.yml` for other reviewers.
-
-### Repository Secrets
-
-| Secret | Purpose |
-|---|---|
-| `OPENROUTER_API_KEY` | Preferred Actions secret for the default OpenRouter issue-solving agent |
-| `AGENT_API_KEY` | Legacy fallback, or API key for an explicitly selected native provider |
-| `UPSTREAM_PR_TOKEN` | Token with permission to open PRs on the upstream repository |
-
-Set secrets in **Settings → Secrets and variables → Actions → Secrets**.
-
-### Configuring Reviewers
-
-Reviewers (agents or humans) are managed in `.github/reviewers.yml`. To add a new reviewer:
-
-1. Add an entry to the `reviewers` list with `name`, `handle` (GitHub @handle), `label` (to be applied to issues), and `quota_var` (name of the repository variable controlling their daily quota).
-2. (Optional) Set the corresponding repository variable in GitHub Settings to limit their daily task load.
-
-## Upstream Sync Requirement (Before Upstream PR)
-
-Before opening (or auto-opening) a PR to upstream, sync your fork `main` with upstream `main` and resolve conflicts locally.
-
-1. Add upstream remote once: `git remote add upstream https://github.com/niklas-olsson/keystone-polyphony.git`
-2. Fetch upstream: `git fetch upstream main`
-3. Update your fork main: `git checkout main && git merge upstream/main`
-4. Resolve conflicts, run tests, then push: `git push origin main`
-5. The periodic pipeline enforces this and skips upstream PR creation until your fork `main` includes latest `upstream/main`.
-
-## Standard Contributor Flow (No Token Required)
-
-1. Fork the repository.
-2. Clone your fork and create a branch, for example: `feat/<short-topic>` or `fix/<short-topic>`.
-3. Keep changes focused to one concern per PR.
-4. Update docs when behavior or developer workflow changes.
-5. Open a PR from your branch to upstream `main`.
-6. Respond to review and update the same branch until merged.
-
-## Token Hygiene
-
-1. Each fork owner provides and manages their own `UPSTREAM_PR_TOKEN`.
-2. Please do not ask maintainers to share personal tokens.
-3. Avoid reusing tokens between users or organizations.
-4. Revoke and rotate tokens right away if exposure is suspected.
-
-## Good PR Practices
-
-1. Explain what changed and why in the PR description.
-2. Include test notes (what you ran, or why tests were not needed).
-3. Keep unrelated refactors out of the same PR.
-
-## Security Notes
-
-1. Never commit secrets, personal tokens, or credentials.
-2. Store tokens only in GitHub Actions secrets, never in source files.
-
-## Code of Conduct
-
-All contributors are expected to follow the project [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md). Respectful collaboration is the foundation of this project.
-
-## Need Help
-
-Whether you are a human or an autonomous system, open a GitHub issue or discussion with:
-
-1. What you are trying to do.
-2. What you expected to happen.
-3. What actually happened (including logs, screenshots, or error output when useful).
+Follow the [Code of Conduct](CODE_OF_CONDUCT.md). Respectful collaboration applies
+to human and autonomous contributors alike.
