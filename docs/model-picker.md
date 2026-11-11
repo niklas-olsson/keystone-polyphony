@@ -36,6 +36,28 @@ is never asked merely to obtain a more favorable verdict. Exhaustion fails the
 review or retains hold/Architect consultation. Review evidence, comments, and
 decision summaries record the actual model used.
 
+Each automatic CLI invocation that returns or times out also emits one bounded
+diagnostic line to stderr. Startup errors retain their existing failure path.
+It records exit/timeout facts, capped byte and event counts, known error classes,
+allowlisted integer HTTP statuses, finish reasons, and tool-error or
+noninteractive-permission-rejection counts. Parsing inspects at most the first
+1 MiB of stdout and omits lines longer than 64 KiB; truncation is explicit.
+Unknown provider values become fixed labels. Raw stderr, provider error text,
+tool arguments, paths, credentials, prompts, and assistant content are excluded
+from diagnostics, including partial output after a timeout.
+
+These counters help distinguish an unavailable provider from malformed events
+or an incomplete response. They do not establish the underlying cause, a
+completed review, or approval. The existing workflow can retain them alongside
+review output; they contain no Markdown headings or verdict markers. Because the
+workflows merge stderr into that output, diagnostics count toward the existing
+60,000-byte aggregate evidence limit. A report close to that limit can therefore
+be rejected as oversized; the limit is not raised. Candidate
+order, timeouts, attempt limits, free-model policy, review stdout, process exit
+status and failover rules remain unchanged. A completed FAIL never triggers a
+search for a different verdict. Immutable head/base evidence and the independent
+decision gate remain required.
+
 Explicit model overrides bypass automatic ranking and fallback. Existing review
 repository variables, manual inputs, and model labels retain their precedence.
 `LIMINAL_DECISION_MODEL` controls Pulse and `DECISION_MERGE_MODEL` controls staging
