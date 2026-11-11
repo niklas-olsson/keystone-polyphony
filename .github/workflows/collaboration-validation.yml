@@ -40,4 +40,38 @@ jobs:
         if: always()
         env:
           PYTHONPATH: src:.
+          POLYPHONY_REAL_CHAT_TESTS: '1'
         run: python -m pytest -q
+      - name: Measure incremental conversation frames and durable storage
+        run: |
+          python scripts/measure-conversation.py \
+            --work-dir "$RUNNER_TEMP/conversation-measurement-state" \
+            > conversation-measurements.json
+      - name: Retain the credential-free conversation measurements
+        uses: actions/upload-artifact@v4
+        with:
+          name: conversation-measurements
+          path: conversation-measurements.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Install the loopback capture tool
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y tcpdump
+          tcpdump --version
+      - name: Measure actual steady peer traffic and reopened storage
+        timeout-minutes: 12
+        run: |
+          python scripts/measure-conversation-real.py \
+            --sudo-capture \
+            --work-dir "$RUNNER_TEMP/conversation-real-measurement"
+      - name: Retain only aggregate real-transport measurements
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conversation-real-measurements
+          path: |
+            ${{ runner.temp }}/conversation-real-measurement/report.json
+            ${{ runner.temp }}/conversation-real-measurement/diagnostics.json
+          if-no-files-found: error
+          retention-days: 14

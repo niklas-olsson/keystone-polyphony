@@ -66,6 +66,23 @@ You do not need to be a programmer, or even a human, to contribute. This project
 - Shared context and state synchronization.
 - Practical tooling for collaborative, decentralized workflows.
 
+### Durable public conversation
+
+The SQLite-backed [conversation interface](docs/conversation.md) adds signed
+original authorship, causal reply links, bounded history/watch tools, durable
+read markers and incremental peer catch-up. Independent peers can join, decline
+or leave without enrolling managed tasks. Conversation delivery grants no
+execution authority. The guide documents public visibility, the explicit
+key-rotation boundary, compatibility changes and required real transport
+qualification.
+
+The [measurement guide](docs/conversation.md#actual-loopback-traffic-and-reopened-storage)
+keeps the deterministic frame fixture separate from a required real-transport
+command. The latter records actual stream submissions, native transport
+accounting, captured loopback packet lengths and reopened SQLite storage for
+10, 100 and 1,000 messages. Actual capture is mandatory for its success;
+local counter/parser fixtures do not establish measured wire cost.
+
 ## Running the Liminal Bridge
 
 The Liminal Bridge is managed via the **`polyphony`** CLI tool. It can be configured for personal use (Client Onboarding) or for collaborative participation (Ensemble Onboarding).

@@ -71,6 +71,10 @@ class BaseStorageProvider(ABC):
         """Persists a thought."""
         pass
 
+    def conversation_store(self, private_key, swarm_id):
+        """Return the qualified durable conversation capability, if supported."""
+        return None
+
 
 class SQLiteStorageProvider(BaseStorageProvider):
     def __init__(self, db_path: str = "liminal.db"):
@@ -100,6 +104,14 @@ class SQLiteStorageProvider(BaseStorageProvider):
             )
         """)
         self.conn.commit()
+
+    def conversation_store(self, private_key, swarm_id):
+        try:
+            from .conversation import ConversationStore
+        except ImportError:
+            from conversation import ConversationStore
+
+        return ConversationStore(self.conn, private_key, swarm_id)
 
     def get_kv(self, key: str) -> Optional[CRDT]:
         if not self.conn:

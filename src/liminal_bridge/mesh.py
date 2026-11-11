@@ -25,9 +25,11 @@ except ImportError:
 try:
     from .crdt import CRDT, Register, PNCounter, GSet, ORSet, RevisionLog
     from .storage import BaseStorageProvider, SQLiteStorageProvider
+    from .conversation import Conversation, ConversationError, ConversationUnsupported
 except ImportError:
     from crdt import CRDT, Register, PNCounter, GSet, ORSet, RevisionLog
     from storage import BaseStorageProvider, SQLiteStorageProvider
+    from conversation import Conversation, ConversationError, ConversationUnsupported
 
 
 class LiminalMesh:
@@ -106,6 +108,17 @@ class LiminalMesh:
         # Persistence
         self.storage.init_db()
         self._load_state()
+        self.conversation_error = (
+            "durable conversation requires the qualified SQLite storage backend"
+        )
+        try:
+            store = self.storage.conversation_store(self.private_key, self.topic)
+        except ConversationUnsupported as error:
+            store = None
+            self.conversation_error = str(error)
+        self.conversation = (
+            Conversation(store, self.broadcast) if store is not None else None
+        )
 
         self.process: Optional[asyncio.subprocess.Process] = None
         self.running = False
@@ -208,6 +221,8 @@ class LiminalMesh:
             try:
                 await asyncio.sleep(self._gossip_interval_seconds)
                 if self.peers:
+                    if self.conversation:
+                        await self.conversation.announce()
                     await self.broadcast(
                         {
                             "type": "gossip_request",
@@ -414,6 +429,13 @@ class LiminalMesh:
     async def rotate_key(self, new_key: str, grace_period: float = 0):
         """Rotates the swarm key."""
         old_key = self.secret_key
+        if (
+            self.conversation
+            and hashlib.sha256(new_key.encode()).hexdigest() != self.topic
+        ):
+            self.conversation_error = "conversation scope changed; use a separate node database or restart with the original scope"
+            self.conversation.disable(self.conversation_error)
+            self.conversation = None
 
         # Join new swarm immediately
         await self.join_swarms([new_key])
@@ -997,6 +1019,8 @@ class LiminalMesh:
         # Serialize KV store to JSON-friendly format
         kv_serialized = {}
         for k, v in self.kv_store.items():
+            if k.startswith("chat:"):
+                continue  # Legacy unsigned chat is retained locally, never replayed as new history.
             try:
                 kv_serialized[k] = v.to_dict()
             except BaseException:
@@ -1036,6 +1060,8 @@ class LiminalMesh:
                 )
             # Push full state welcome packet to new peer
             await self._push_welcome_to_peer(peer_id)
+            if self.conversation:
+                await self.conversation.announce()
             await self.broadcast_network_state()
 
         elif msg_type == "peer_disconnected":
@@ -1140,6 +1166,17 @@ class LiminalMesh:
         if remote_vc:
             self._merge_clock(remote_vc)
 
+        if isinstance(p_type, str) and p_type.startswith("chat_"):
+            if self.conversation:
+                try:
+                    await self.conversation.handle(payload)
+                except ConversationError:
+                    # Invalid public chat cannot invoke another protocol or expose its contents in logs.
+                    self.log_aggregator.add_telemetry(
+                        "invalid_conversation_messages", 1
+                    )
+            return
+
         if p_type == "thought":
             content = payload.get("content")
             status = payload.get("status")
@@ -1157,6 +1194,8 @@ class LiminalMesh:
 
         elif p_type == "kv_update":
             key = payload.get("key")
+            if isinstance(key, str) and key.startswith("chat:"):
+                return  # New chat never accepts unverified legacy history from peers.
             crdt_data = payload.get("crdt")
 
             if crdt_data:
@@ -1307,6 +1346,8 @@ class LiminalMesh:
 
                 # Merge KV
                 for key, crdt_data in welcome_kv.items():
+                    if key.startswith("chat:"):
+                        continue
                     try:
                         remote_crdt = self._deserialize_crdt(crdt_data)
                         current = self.kv_store.get(key)
@@ -1338,6 +1379,7 @@ class LiminalMesh:
                     "kv": {
                         k: v.to_dict() if hasattr(v, "to_dict") else str(v)
                         for k, v in self.kv_store.items()
+                        if not k.startswith("chat:")
                     },
                     "vector_clock": self.vector_clock,
                     "origin": self.node_id,
@@ -1569,6 +1611,10 @@ class LiminalMesh:
 
     async def update_kv(self, key: str, value: Any, urgency: str = "low"):
         """Updates a Key-Value pair using Register."""
+        if key.startswith("chat:"):
+            raise ConversationError(
+                "legacy chat keys are read-only; use the conversation interface"
+            )
         self._increment_clock()
         timestamp = time.time()
 
@@ -1597,6 +1643,10 @@ class LiminalMesh:
 
     async def update_counter(self, key: str, delta: int = 1, urgency: str = "low"):
         """Updates a PNCounter."""
+        if key.startswith("chat:"):
+            raise ConversationError(
+                "legacy chat keys are read-only; use the conversation interface"
+            )
         self._increment_clock()  # Counters don't strictly use VC for merge, but good to track causality in mesh
 
         current = self.kv_store.get(key)
@@ -1622,6 +1672,10 @@ class LiminalMesh:
         self, key: str, element: Any, remove: bool = False, urgency: str = "low"
     ):
         """Updates an ORSet (or GSet if remove=False and fallback)."""
+        if key.startswith("chat:"):
+            raise ConversationError(
+                "legacy chat sets are read-only; use the conversation interface"
+            )
         self._increment_clock()
 
         current = self.kv_store.get(key)
@@ -1649,12 +1703,58 @@ class LiminalMesh:
             return None
         return val.value()
 
+    def require_conversation(self):
+        if self.conversation is None:
+            raise ConversationUnsupported(self.conversation_error)
+        return self.conversation
+
+    def legacy_chat(self, topic, limit=100):
+        """Bounded local inspection of retained, unauthenticated ORSet data."""
+        from itertools import islice
+
+        try:
+            from .conversation import MAX_PAGE_BYTES, limit as page_limit, topic_name
+        except ImportError:
+            from conversation import MAX_PAGE_BYTES, limit as page_limit, topic_name
+        topic_name(topic)
+        page_limit(limit)
+        current = self.kv_store.get("chat:" + topic)
+        if not isinstance(current, ORSet):
+            return {"legacy_unverified": True, "messages": [], "truncated": False}
+        messages, seen, size, scanned = [], set(), 0, 0
+        for raw, tag in islice(current.added, 2048):
+            scanned += 1
+            if (raw, tag) in current.removed or raw in seen or not isinstance(raw, str):
+                continue
+            seen.add(raw)
+            if len(raw.encode()) > MAX_PAGE_BYTES or len(messages) >= limit:
+                break
+            try:
+                value = json.loads(raw)
+            except (TypeError, ValueError):
+                continue
+            size += len(raw.encode())
+            if size > MAX_PAGE_BYTES:
+                break
+            messages.append({"legacy_unverified": True, "original": value})
+        return {
+            "legacy_unverified": True,
+            "messages": messages,
+            "truncated": scanned < len(current.added) or len(messages) >= limit,
+            "pagination_supported": False,
+            "note": "Local legacy display only; original authorship is unverified. Full data remains in the node database.",
+        }
+
     def get_all_kv(self) -> Dict[str, Any]:
         """Returns a copy of the KV store with values unwrapped."""
         return {k: v.value() for k, v in self.kv_store.items()}
 
     async def save_revision(self, key: str, diff: str) -> None:
         """Appends a code or state revision diff to the log and broadcasts it."""
+        if key.startswith("chat:"):
+            raise ConversationError(
+                "legacy chat keys are read-only; use the conversation interface"
+            )
         import uuid
         import time
         from .crdt import RevisionLog

@@ -459,114 +459,162 @@ async def consult_architect(context: str) -> str:
 
 
 @mcp.tool()
-async def ensemble_chat(topic: str, message: str) -> str:
-    """Posts a message to a topic-based collaborative discussion thread."""
+async def conversation_say(
+    topic: str,
+    message: str,
+    request_key: str = None,
+    reply_to: str = None,
+    kind: str = "message",
+    target: str = None,
+    references: list[dict] = None,
+) -> str:
+    """Post approved PUBLIC content; references and invitations confer no execution authority.
+
+    Reuse request_key for an identical retry. reply_to is a signed message ID.
+    target addresses a peer in a public message; it does not make content private.
+    """
     ensure_mesh()
+    conversation = mesh.require_conversation()
     if not mesh.running:
         await mesh.start()
-
-    payload = {
-        "sender": mesh.node_id,
-        "timestamp": time.time(),
-        "content": message,
-    }
-    # Elements in ORSet must be hashable. JSON string works well.
-    await mesh.update_set(f"chat:{topic}", json.dumps(payload))
-    return f"Message posted to topic '{topic}'."
-
-
-@mcp.tool()
-async def get_ensemble_chat(topic: str) -> str:
-    """Retrieves the history of a collaborative discussion thread, sorted by time."""
-    ensure_mesh()
-    # We don't strictly need to start the mesh to read local state,
-    # but starting ensures we are connected to receive updates.
-    if not mesh.running:
-        await mesh.start()
-
-    messages_raw = mesh.get_kv(f"chat:{topic}") or []
-    messages = []
-    for m_json in messages_raw:
-        try:
-            messages.append(json.loads(m_json))
-        except (json.JSONDecodeError, TypeError):
-            continue
-
-    # Sort by timestamp
-    messages.sort(key=lambda x: x.get("timestamp", 0))
-    return json.dumps(messages, indent=2)
-
-
-@mcp.tool()
-async def list_ensemble_chats() -> str:
-    """Lists all active collaborative discussion topics (channels)."""
-    ensure_mesh()
-    if not mesh.running:
-        await mesh.start()
-
-    topics = []
-    for key in mesh.kv_store.keys():
-        if key.startswith("chat:"):
-            topics.append(key[5:])
-    return json.dumps(topics)
-
-
-@mcp.tool()
-async def mark_chat_read(topic: str) -> str:
-    """Marks a collaborative discussion topic as read (local to this node)."""
-    ensure_mesh()
-    # Store local read timestamp in a special local-only KV or just a file
-    # For simplicity, use the mesh metadata or a separate sqlite table
-    last_msg = 0
-    messages_raw = mesh.get_kv(f"chat:{topic}") or []
-    for m_json in messages_raw:
-        try:
-            ts = json.loads(m_json).get("timestamp", 0)
-            last_msg = max(last_msg, ts)
-        except:
-            continue
-
-    # Save to local metadata
-    cursor = mesh.conn.cursor()
-    cursor.execute(
-        "INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
-        (f"read_ts:{topic}", str(last_msg)),
+    result = await conversation.say(
+        topic,
+        message,
+        request_key=request_key,
+        reply_to=reply_to,
+        kind=kind,
+        target=target,
+        references=references,
     )
-    mesh.conn.commit()
-    return f"Topic '{topic}' marked as read at {last_msg}."
+    return json.dumps(result)
 
 
 @mcp.tool()
-async def get_unread_chats() -> str:
-    """Returns a list of topics with messages that haven't been read locally."""
+async def conversation_start(topic: str, request_key: str = None) -> str:
+    """Start an ordinary public topic, without managed task enrollment or peer control."""
+    return await conversation_say(topic, "", request_key=request_key, kind="start")
+
+
+@mcp.tool()
+async def conversation_join(
+    topic: str,
+    decision: str = "join",
+    message: str = "",
+    request_key: str = None,
+) -> str:
+    """Voluntarily join, decline or leave a public conversation; no process is controlled."""
+    if not isinstance(decision, str) or decision not in {"join", "decline", "leave"}:
+        raise ValueError("conversation participation must be join, decline or leave")
+    return await conversation_say(
+        topic, message, request_key=request_key, kind=decision
+    )
+
+
+@mcp.tool()
+async def conversation_history(
+    topic: str,
+    after: int = 0,
+    limit: int = 100,
+    stream_id: str = None,
+) -> str:
+    """Read a bounded page with local cursor, signed records, causal gaps and continuation.
+
+    Persist stream_id with next_cursor when resuming. Reads do not mark entries read.
+    """
     ensure_mesh()
-    unread = []
-    for key in mesh.kv_store.keys():
-        if key.startswith("chat:"):
-            topic = key[5:]
-            # Get last read TS
-            cursor = mesh.conn.cursor()
-            cursor.execute(
-                "SELECT value FROM metadata WHERE key = ?", (f"read_ts:{topic}",)
-            )
-            row = cursor.fetchone()
-            read_ts = float(row[0]) if row else 0
+    return json.dumps(
+        mesh.require_conversation().store.history(topic, after, limit, stream_id)
+    )
 
-            # Check for newer messages
-            has_new = False
-            messages_raw = mesh.get_kv(key) or []
-            for m_json in messages_raw:
-                try:
-                    if json.loads(m_json).get("timestamp", 0) > read_ts:
-                        has_new = True
-                        break
-                except:
-                    continue
 
-            if has_new:
-                unread.append(topic)
+@mcp.tool()
+async def conversation_watch(
+    topic: str,
+    after: int = 0,
+    limit: int = 100,
+    stream_id: str = None,
+    timeout: float = 30,
+) -> str:
+    """Wait up to 30 seconds for a bounded history page, without inference or execution."""
+    ensure_mesh()
+    conversation = mesh.require_conversation()
+    if not mesh.running:
+        await mesh.start()
+    return json.dumps(await conversation.watch(topic, after, limit, stream_id, timeout))
 
-    return json.dumps(unread)
+
+@mcp.tool()
+async def ensemble_chat(
+    topic: str,
+    message: str,
+    request_key: str = None,
+    reply_to: str = None,
+) -> str:
+    """Compatibility wrapper for signed, durable PUBLIC conversation posts."""
+    result = json.loads(await conversation_say(topic, message, request_key, reply_to))
+    return f"Message {result['message_id']} stored for topic '{topic}'; transport submitted."
+
+
+@mcp.tool()
+async def get_ensemble_chat(topic: str, after: int = 0, limit: int = 100) -> str:
+    """Return at most 100 authenticated entries. Continue after the last entry's cursor.
+
+    Use conversation_history for explicit stream/reset and causal-gap metadata.
+    Retained unsigned history is available only through get_legacy_ensemble_chat.
+    """
+    page = json.loads(await conversation_history(topic, after, limit))
+    result = []
+    for item in page["messages"]:
+        body = item["record"]["body"]
+        result.append(
+            {
+                "sender": body["author"],
+                "timestamp": body["timestamp"],
+                "content": body["content"],
+                "message_id": item["record"]["message_id"],
+                "cursor": item["cursor"],
+                "session_id": body["session_id"],
+                "kind": body["kind"],
+                "reply_to": body["reply_to"],
+                "reply_state": item["reply_state"],
+                "authenticated": True,
+            }
+        )
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+async def get_legacy_ensemble_chat(topic: str, limit: int = 100) -> str:
+    """Inspect a bounded local legacy ORSet sample, explicitly without verified attribution."""
+    ensure_mesh()
+    return json.dumps(mesh.legacy_chat(topic, limit))
+
+
+@mcp.tool()
+async def list_ensemble_chats(after: str = "", limit: int = 100) -> str:
+    """List at most 100 public topics; continue after the last returned topic name."""
+    ensure_mesh()
+    page = mesh.require_conversation().store.topics(after, limit)
+    return json.dumps([item["topic"] for item in page["topics"]])
+
+
+@mcp.tool()
+async def mark_chat_read(topic: str, through: int = None) -> str:
+    """Acknowledge only entries actually returned by local history reads.
+
+    Unseen holes remain unread. This is local display state, never an effect receipt.
+    """
+    ensure_mesh()
+    result = mesh.require_conversation().store.mark_read(topic, through)
+    return json.dumps(result)
+
+
+@mcp.tool()
+async def get_unread_chats(after: str = "", limit: int = 100) -> str:
+    """List a bounded page of topics with unseen contributions, independent of timestamps."""
+    ensure_mesh()
+    page = mesh.require_conversation().store.topics(after, limit, unread_only=True)
+    return json.dumps([item["topic"] for item in page["topics"]])
 
 
 @mcp.tool()
