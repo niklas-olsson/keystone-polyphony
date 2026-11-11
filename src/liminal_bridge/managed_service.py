@@ -7,6 +7,7 @@ from aiohttp import web
 
 from src.core.collaboration.authority import digest, immutable_revision
 from src.core.collaboration.child_grants import CHILD_POLICY_FIELDS, child_policy
+from src.core.collaboration.child_outcomes import OUTCOME_VERSION
 from .child_service import install_child_routes
 from src.core.collaboration.managed_runtime import (
     ClaimNotAllocated,
@@ -225,6 +226,7 @@ def install_managed_routes(app, store, credentials, principal_key, config):
                 "external_root": profile is not None,
                 "children": False,
                 "child_grants": child_policy(profile) is not None,
+                "child_initial_outcome": OUTCOME_VERSION,
                 "child_policy": child_policy(profile),
                 "profile_supported": profile is not None,
                 "reason": "" if profile else "approved profile not found",
