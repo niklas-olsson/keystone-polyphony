@@ -10,7 +10,7 @@ async function main() {
   });
   const { port } = socket.address();
   await new Promise(resolve => socket.close(resolve));
-  const node = DHT.bootstrapper(port, '127.0.0.1');
+  const node = DHT.bootstrapper(port, '127.0.0.1', { host: '127.0.0.1', nodes: [] });
   await node.ready();
   process.stdout.write(`127.0.0.1:${port}\n`);
   process.on('SIGTERM', async () => {
