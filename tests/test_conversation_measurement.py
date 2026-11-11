@@ -389,6 +389,119 @@ def load_real_measurement():
     return module
 
 
+class ControlledCaptureProcess:
+    """Capture process lifecycle fixture; no packets or native capture."""
+
+    def __init__(self, returncode=None, stopped_returncode=0):
+        self.returncode = returncode
+        self.stopped_returncode = stopped_returncode
+        self.signals = []
+
+    def send_signal(self, value):
+        self.signals.append(value)
+
+    async def wait(self):
+        self.returncode = self.stopped_returncode
+        return self.returncode
+
+
+@pytest.mark.asyncio
+async def test_actual_capture_requests_immediate_input_waits_for_readiness_and_stops(
+    tmp_path, monkeypatch
+):
+    module = load_real_measurement()
+    process = ControlledCaptureProcess()
+    calls, waits = [], []
+
+    async def spawn(*args, **kwargs):
+        calls.append((args, kwargs))
+        return process
+
+    async def become_ready(seconds):
+        waits.append(seconds)
+        capture.log.write(b"listening on lo, link-type EN10MB\n")
+        capture.log.flush()
+
+    monkeypatch.setattr(module.asyncio, "create_subprocess_exec", spawn)
+    monkeypatch.setattr(module.asyncio, "sleep", become_ready)
+    capture = module.Capture(tmp_path, ["sudo", "-n", "tcpdump"], [FORWARD, REVERSE])
+    await capture.start()
+    assert waits == [0.05]
+    assert len(calls) == 1
+    args, options = calls[0]
+    assert args == (
+        "sudo",
+        "-n",
+        "tcpdump",
+        "-i",
+        "lo",
+        "-Q",
+        "in",
+        "-n",
+        "-p",
+        "--immediate-mode",
+        "-U",
+        "-s",
+        "0",
+        "-B",
+        "4096",
+        "-Z",
+        module.pwd.getpwuid(os.getuid()).pw_name,
+        "-w",
+        str(capture.path),
+        "ip and udp and ((src host 127.0.0.1 and src port 1201 and dst host 127.0.0.1 and dst port 1202) or "
+        "(src host 127.0.0.1 and src port 1202 and dst host 127.0.0.1 and dst port 1201))",
+    )
+    assert options == {
+        "stdin": asyncio.subprocess.DEVNULL,
+        "stdout": asyncio.subprocess.DEVNULL,
+        "stderr": capture.log,
+    }
+    await capture.stop(qualify=True)
+    assert process.signals == [module.signal.SIGINT]
+    assert process.returncode == 0 and capture.log.closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["spawn", "exit"])
+async def test_actual_capture_startup_failure_has_no_fallback_or_false_readiness(
+    tmp_path, monkeypatch, failure
+):
+    module = load_real_measurement()
+    calls = []
+
+    async def spawn(*args, **kwargs):
+        calls.append(args)
+        if failure == "spawn":
+            raise OSError("controlled startup failure")
+        # A readiness-looking line cannot override the process exit status.
+        kwargs["stderr"].write(b"listening on lo, link-type EN10MB\n")
+        kwargs["stderr"].flush()
+        return ControlledCaptureProcess(returncode=1)
+
+    monkeypatch.setattr(module.asyncio, "create_subprocess_exec", spawn)
+    capture = module.Capture(tmp_path, ["tcpdump"], [FORWARD, REVERSE])
+    try:
+        with pytest.raises(OSError if failure == "spawn" else MeasurementError):
+            await capture.start()
+    finally:
+        await capture.stop()
+    assert len(calls) == 1 and "--immediate-mode" in calls[0]
+    assert capture.log.closed
+
+
+@pytest.mark.asyncio
+async def test_actual_capture_nonzero_shutdown_cannot_qualify(tmp_path):
+    module = load_real_measurement()
+    capture = module.Capture(tmp_path, ["tcpdump"], [FORWARD, REVERSE])
+    capture.process = ControlledCaptureProcess(stopped_returncode=1)
+    capture.log = capture.log_path.open("xb")
+    with pytest.raises(MeasurementError, match="capture did not exit successfully"):
+        await capture.stop(qualify=True)
+    assert capture.process.signals == [module.signal.SIGINT]
+    assert capture.log.closed
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("previous", [(None, None), ("original diagnostics", "0")])
 @pytest.mark.parametrize("failure", [None, ValueError, asyncio.CancelledError])

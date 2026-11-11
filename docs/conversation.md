@@ -215,6 +215,15 @@ uses this option. It does not elevate the Python harness, Node peers or local
 development sandbox. Capture is restricted to the loopback interface and the
 inventoried test UDP endpoints, including a separate calibration pair.
 
+Capture requires tcpdump's `--immediate-mode`, which requests packets as they
+arrive. The existing `-U` separately flushes received packets to the savefile;
+output flushing alone does not disable the capture buffer. The aggregate
+report records `capture_delivery: "immediate"`. Unsupported immediate mode
+fails startup without a fallback. Extra capture wakeups can affect measurement
+overhead, so elapsed times describe this instrumented configuration. Immediate
+delivery does not establish lossless shutdown: exact calibration, final packet
+counts, zero reported drops and every other capture predicate must still pass.
+
 The command temporarily enables both `POLYPHONY_LOCAL_MEASUREMENT=1` and
 `POLYPHONY_MEASUREMENT_LOOPBACK=1` for each scenario, restoring their exact prior
 values even when directory, log or bootstrap setup fails. Diagnostics alone
