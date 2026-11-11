@@ -29,7 +29,7 @@ from .coordinator import CollaborationCoordinator
 from .git_worktree_adapter import GitWorktreeAdapter
 from .container_adapter import ContainerExecutionAdapter
 from .conductor import EnsembleConductor, AdvisoryNudge, WorkerFlowManager
-from .admission import AdmissionHandoffEmitter
+from .admission import AdmissionHandoffEmitter, ExperimentalReceiptExporter
 from .authority import (
     Coordinator,
     Conflict,
@@ -67,6 +67,7 @@ __all__ = [
     "AdvisoryNudge",
     "WorkerFlowManager",
     "AdmissionHandoffEmitter",
+    "ExperimentalReceiptExporter",
     "Coordinator",
     "Conflict",
     "managed_task",
