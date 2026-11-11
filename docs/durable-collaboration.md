@@ -10,20 +10,67 @@ Run all SQLite clients on one host, on a local filesystem. Remote workers use
 the authenticated HTTP interface through an SSH tunnel. Never share the WAL
 files over a network filesystem. The default listener is loopback only.
 
-## Unified Architecture Structure
+## Authority and experimental modules
 
 The durable collaboration protocol is organized into:
 
 - **Core Protocol & Authority (`src/core/collaboration/`)**:
   - `authority.py`: Single-host durable SQLite WAL authority (`Coordinator`), expected-fence CAS, attempt reservations, and candidate admission.
   - `models.py`: Formal typed schemas (`TaskObjective`, `AssignmentClaim`, `ReviewReceipt`, `ReviewVerdict`, etc.).
-  - `ledger.py`: `FencedLedger` implementing atomic dual-budget and monotonic fence tracking.
+  - `ledger.py`: Experimental `FencedLedger` implementing its own dual-budget and fence tracking. It is not the canonical managed authority.
+  - `admission.py`: `ExperimentalReceiptExporter` inspects local FencedLedger acceptance without producing GitHub review evidence or managed admission.
   - `conductor.py`: `EnsembleConductor` providing non-blocking advisory nudges and worker pivot guidance.
   - `adapter.py` & `git_worktree_adapter.py`: Portable execution contracts, worktree lifecycle, diff extraction, and command execution.
 - **Service & Transport Layer (`src/liminal_bridge/`)**:
   - `coordinator_service.py`: Authenticated HTTP daemon exposing the authority to remote nodes over SSH tunnels.
-  - `server.py`: FastMCP server exposing collaboration primitives as MCP tools (`create_enrolled_task`, `claim_enrolled_task`, etc.) for direct agent interaction.
+  - `server.py`: FastMCP server exposing ordinary peer collaboration and experimental FencedLedger tools (`create_enrolled_task`, `claim_enrolled_task`, etc.). Those experimental tools do not use the authenticated canonical service.
   - `coordinator.py`: Backward-compatible re-export module routing callers to `src.core.collaboration.authority`.
+
+### Experimental inspection and compatibility
+
+`scripts/task.py` and its `./polyphony task` wrapper still operate on the
+experimental FencedLedger. Their caller-supplied actor and reviewer labels do
+not prove authenticated identity. A local candidate identifier is not a Git
+commit SHA. Use the [authenticated managed runtime interface](managed-runtime.md)
+for supported managed enrollment and execution. Full CLI/MCP convergence remains
+tracked in [#109](https://github.com/niklas-olsson/keystone-polyphony/issues/109).
+
+Inspect an existing locally accepted candidate with:
+
+```sh
+./polyphony task --db /path/to/existing-ledger.db local-receipt --task-id TASK
+```
+
+The receipt has `receipt_type: polyphony-experimental-local`,
+`managed_authority: false`, `release_authorized: false`, and
+`identity_source: caller-supplied`. It preserves the local task, candidate,
+baseline reference, revision and all still-valid local review records, including
+dissent. Local acceptance follows the experimental ledger's policy; this export
+does not establish independent review or add an acceptance policy. A held task
+cannot export a prior accepted pointer as current local acceptance.
+
+No historical ledger records are migrated or deleted. Read-only ledger methods
+remain available to inspect held or unaccepted work. `ExperimentalReceiptExporter`
+provides `emit_local_receipt(task_id)` and `write_local_receipt(task_id)`; the
+default filename is `experimental-receipt.json`. The old `AdmissionHandoffEmitter`
+class name remains an alias. Its `emit_review_evidence` and `write_evidence_file`
+methods are deprecated aliases with the same local-only output. Passing
+`pr_number`, `workflow_path`, `run_id` or `run_attempt` now fails explicitly.
+Writing to the reserved `review-evidence.json` filename also fails without
+overwriting the file. This filename check prevents an accidental mix-up; it is
+not an access-control boundary.
+
+The CLI's old `evidence` action is a deprecated alias that prints a notice to
+stderr and the local receipt to stdout. Its old `--pr` option fails instead of
+claiming PR provenance. Consumers of the former forge-shaped output must migrate
+to local receipt fields. Previously exported files are historical experimental
+data and cannot establish forge approval.
+
+The authentic `scripts/write-review-evidence.py` workflow emitter and the
+[decision admission gate](decision-merge.md) are unchanged. Genuine PR evidence
+still requires the actual repository, head/base revisions, workflow run, review
+and CI provenance. The gate rejects an experimental local receipt even when the
+other PR readiness conditions pass. No previous successful bypass is claimed.
 
 ## Decisions and boundaries
 

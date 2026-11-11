@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CLI utility for managing tasks in Keystone Polyphony (both legacy and enrolled)."""
+"""Experimental FencedLedger tasks and inspection receipts, not managed authority."""
 
 import sys
 import os
@@ -16,7 +16,7 @@ from src.core.collaboration.ledger import FencedLedger
 from src.core.collaboration.adapter import DeterministicExecutionAdapter
 from src.core.collaboration.coordinator import CollaborationCoordinator
 from src.core.collaboration.conductor import EnsembleConductor
-from src.core.collaboration.admission import AdmissionHandoffEmitter
+from src.core.collaboration.admission import ExperimentalReceiptExporter
 from src.core.collaboration.models import ReviewVerdict, TaskStatus
 
 
@@ -33,10 +33,10 @@ def get_conductor(db_path: str = None) -> EnsembleConductor:
     return EnsembleConductor(ledger)
 
 
-def get_admission(db_path: str = None) -> AdmissionHandoffEmitter:
+def get_receipts(db_path: str = None) -> ExperimentalReceiptExporter:
     db = db_path or os.getenv("LIMINAL_COLLAB_DB", "collab_ledger.db")
     ledger = FencedLedger(db)
-    return AdmissionHandoffEmitter(ledger)
+    return ExperimentalReceiptExporter(ledger)
 
 
 def handle_enroll(args):
@@ -136,15 +136,22 @@ def handle_review(args):
     )
 
 
-def handle_evidence(args):
-    admission = get_admission(args.db)
+def handle_local_receipt(args):
     try:
-        ev = admission.emit_review_evidence(
-            task_id=args.task_id,
-            pr_number=args.pr,
-        )
-        print(json.dumps(ev, indent=2))
-    except Exception as e:
+        if args.pr is not None:
+            raise ValueError(
+                "Experimental records cannot certify GitHub PR or workflow provenance; "
+                "omit --pr to inspect a local receipt"
+            )
+        if args.action == "evidence":
+            print(
+                "Deprecated: evidence exports an experimental local receipt only; "
+                "use local-receipt. It cannot authorize managed work or a release.",
+                file=sys.stderr,
+            )
+        receipt = get_receipts(args.db).emit_local_receipt(args.task_id)
+        print(json.dumps(receipt, indent=2))
+    except ValueError as e:
         print(json.dumps({"success": False, "error": str(e)}, indent=2))
         sys.exit(1)
 
@@ -158,7 +165,7 @@ def handle_list(args):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Manage Polyphony tasks and enrolled collaboration protocol."
+        description="Inspect experimental FencedLedger tasks. Managed tasks use the authenticated coordinator service."
     )
     parser.add_argument(
         "--db", type=str, default=None, help="Path to collaboration SQLite ledger"
@@ -219,13 +226,15 @@ def main():
     p_review.add_argument("--notes", default="")
     p_review.set_defaults(func=handle_review)
 
-    # evidence
+    # Local inspection only; the deprecated name cannot emit forge evidence.
     p_ev = subparsers.add_parser(
-        "evidence", help="Emit staging admission review-evidence.json"
+        "local-receipt",
+        aliases=["evidence"],
+        help="Inspect experimental local acceptance; never forge review evidence",
     )
     p_ev.add_argument("--task-id", required=True)
-    p_ev.add_argument("--pr", type=int, default=None)
-    p_ev.set_defaults(func=handle_evidence)
+    p_ev.add_argument("--pr", type=int, default=None, help=argparse.SUPPRESS)
+    p_ev.set_defaults(func=handle_local_receipt)
 
     args = parser.parse_args()
     if not hasattr(args, "func"):

@@ -254,7 +254,7 @@ def test_scenario_6_candidate_or_acceptance_basis_changes_after_review(harness):
 
     # Stale candidate cannot be emitted for admission
     with pytest.raises(ValueError, match="has no accepted candidate"):
-        admission.emit_review_evidence("t6")
+        admission.emit_local_receipt("t6")
 
 
 # Scenario 7: Cancellation races with submission
@@ -338,7 +338,7 @@ def test_scenario_9_missing_artifact_or_verification_evidence(harness):
 
     # No review recorded yet -> admission must fail
     with pytest.raises(ValueError, match="has no accepted candidate"):
-        admission.emit_review_evidence("t9")
+        admission.emit_local_receipt("t9")
 
     # Review recorded with FAIL -> admission must fail
     coordinator.record_review(
@@ -351,7 +351,7 @@ def test_scenario_9_missing_artifact_or_verification_evidence(harness):
         now=115.0,
     )
     with pytest.raises(ValueError, match="has no accepted candidate"):
-        admission.emit_review_evidence("t9")
+        admission.emit_local_receipt("t9")
 
 
 # Scenario 10: Fresh participant joins
@@ -395,10 +395,11 @@ def test_scenario_10_fresh_participant_joins_reconstructs_state(harness):
     assert task_map["t10_open"].status == TaskStatus.OPEN
     assert task_map["t10_open"].current_assignment_id is None
 
-    # Fresh participant can generate admission evidence for completed task
+    # Fresh participants can inspect local completion without forge authority.
     fresh_admission = AdmissionHandoffEmitter(fresh_ledger)
-    evidence = fresh_admission.emit_review_evidence("t10_done")
-    assert evidence["schema_version"] == 2
-    assert evidence["verdict"] == "PASS"
-    assert evidence["blocking_findings"] == 0
-    assert evidence["head_sha"] == sub.candidate_sha
+    evidence = fresh_admission.emit_local_receipt("t10_done")
+    assert evidence["receipt_type"] == "polyphony-experimental-local"
+    assert evidence["local_reviews"][0]["verdict"] == "PASS"
+    assert evidence["local_reviews"][0]["blocking_findings"] == 0
+    assert evidence["candidate_id"] == sub.candidate_sha
+    assert evidence["release_authorized"] is False
