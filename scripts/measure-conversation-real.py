@@ -7,7 +7,7 @@ work directory. Export only report.json, never logs, journals, identities or PCA
 
 import argparse
 import asyncio
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 import hashlib
 import json
 import os
@@ -230,14 +230,34 @@ def make_peer(directory, name, key, bootstrap):
     return peer
 
 
+@contextmanager
+def measurement_environment():
+    names = ("POLYPHONY_LOCAL_MEASUREMENT", "POLYPHONY_MEASUREMENT_LOOPBACK")
+    previous = {name: os.environ.get(name) for name in names}
+    try:
+        for name in names:
+            os.environ[name] = "1"
+        yield
+    finally:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+
 async def measure(directory, count, command):
+    # Include directory/log/bootstrap setup in the environment's cleanup scope.
+    with measurement_environment():
+        return await measure_with_environment(directory, count, command)
+
+
+async def measure_with_environment(directory, count, command):
     directory.mkdir(mode=0o700)
     key = secrets.token_hex(32)
     peers, processes, sockets = [], [], []
     bootstrap, capture = None, None
     report = None
-    previous_opt_in = os.environ.get("POLYPHONY_LOCAL_MEASUREMENT")
-    os.environ["POLYPHONY_LOCAL_MEASUREMENT"] = "1"
     started = time.monotonic()
     with (directory / "bootstrap.log").open("xb") as bootstrap_log:
         try:
@@ -438,10 +458,6 @@ async def measure(directory, count, command):
                 try:
                     await stop_process(bootstrap)
                 finally:
-                    if previous_opt_in is None:
-                        os.environ.pop("POLYPHONY_LOCAL_MEASUREMENT", None)
-                    else:
-                        os.environ["POLYPHONY_LOCAL_MEASUREMENT"] = previous_opt_in
                     for failure in failures:
                         if isinstance(failure, BaseException):
                             raise failure

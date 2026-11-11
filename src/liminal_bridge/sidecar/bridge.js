@@ -4,6 +4,24 @@ const b4a = require('b4a');
 const readline = require('readline');
 const measurement = process.env.POLYPHONY_LOCAL_MEASUREMENT === '1'
   ? require('./measurement')() : null;
+const loopbackSetting = process.env.POLYPHONY_MEASUREMENT_LOOPBACK;
+const loopback = loopbackSetting === '1';
+
+// Diagnostics do not alter networking. Explicit measurement binding is a
+// separate, fail-closed opt-in, validated before any transport is constructed.
+if (loopbackSetting !== undefined && !loopback) {
+  process.stderr.write(JSON.stringify({ type: 'error', message: 'Invalid measurement loopback opt-in' }) + '\n');
+  process.exit(1);
+}
+if (loopback) {
+  const indexes = process.argv.reduce((found, value, index) => value === '--bootstrap' ? [...found, index] : found, []);
+  const address = indexes.length === 1 ? process.argv[indexes[0] + 1] : undefined;
+  const match = typeof address === 'string' && /^127\.0\.0\.1:([1-9][0-9]{0,4})$/.exec(address);
+  if (!measurement || !match || Number(match[1]) > 65535) {
+    process.stderr.write(JSON.stringify({ type: 'error', message: 'Measurement loopback requires diagnostics and one explicit 127.0.0.1 bootstrap with a valid port' }) + '\n');
+    process.exit(1);
+  }
+}
 
 // Get topic from args
 const topicHex = process.argv[2];
@@ -39,7 +57,16 @@ if (process.argv.includes('--seed')) {
 }
 
 // Initialize Hyperswarm
-const swarm = new Hyperswarm({ bootstrap, keyPair });
+let swarm;
+if (loopback) {
+  const DHT = require('hyperdht');
+  const dht = new DHT({ bootstrap, nodes: [], host: '127.0.0.1' });
+  // Hyperswarm owns the injected DHT and retains its existing swarm identity.
+  // Constructor failures remain fatal before runtime error handlers are added.
+  swarm = new Hyperswarm({ dht, keyPair });
+} else {
+  swarm = new Hyperswarm({ bootstrap, keyPair });
+}
 const peers = new Map();
 const discoveries = new Map(); // Store discovery objects
 

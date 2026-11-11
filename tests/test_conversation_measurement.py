@@ -4,6 +4,7 @@ from copy import deepcopy
 import asyncio
 import importlib.util
 import json
+import os
 from pathlib import Path
 import struct
 import subprocess
@@ -386,6 +387,71 @@ def load_real_measurement():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("previous", [(None, None), ("original diagnostics", "0")])
+@pytest.mark.parametrize("failure", [None, ValueError, asyncio.CancelledError])
+async def test_measurement_opt_ins_restore_exact_values_on_success_failure_and_cancel(
+    tmp_path, monkeypatch, previous, failure
+):
+    module = load_real_measurement()
+    names = ("POLYPHONY_LOCAL_MEASUREMENT", "POLYPHONY_MEASUREMENT_LOOPBACK")
+    for name, value in zip(names, previous):
+        if value is None:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, value)
+
+    async def controlled(*args):
+        assert [os.environ.get(name) for name in names] == ["1", "1"]
+        if failure:
+            raise failure("controlled scenario failure")
+        return {"controlled": "complete"}
+
+    monkeypatch.setattr(module, "measure_with_environment", controlled)
+    if failure:
+        with pytest.raises(failure):
+            await module.measure(tmp_path / "scenario", 10, ["tcpdump"])
+    else:
+        assert await module.measure(tmp_path / "scenario", 10, ["tcpdump"]) == {
+            "controlled": "complete"
+        }
+    assert tuple(os.environ.get(name) for name in names) == previous
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["directory", "log", "bootstrap"])
+async def test_actual_scenario_setup_failures_restore_both_opt_ins(
+    tmp_path, monkeypatch, stage
+):
+    module = load_real_measurement()
+    directory = tmp_path / "scenario"
+    monkeypatch.setenv("POLYPHONY_LOCAL_MEASUREMENT", "previous diagnostics")
+    monkeypatch.delenv("POLYPHONY_MEASUREMENT_LOOPBACK", raising=False)
+    if stage == "directory":
+        directory.mkdir()
+    elif stage == "log":
+        original = Path.open
+
+        def fail_log(path, *args, **kwargs):
+            if path.name == "bootstrap.log":
+                raise OSError("controlled log setup failure")
+            return original(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "open", fail_log)
+    else:
+
+        async def fail_bootstrap(*args, **kwargs):
+            assert os.environ["POLYPHONY_LOCAL_MEASUREMENT"] == "1"
+            assert os.environ["POLYPHONY_MEASUREMENT_LOOPBACK"] == "1"
+            raise OSError("controlled bootstrap setup failure")
+
+        monkeypatch.setattr(module.asyncio, "create_subprocess_exec", fail_bootstrap)
+    with pytest.raises(OSError):
+        await module.measure(directory, 10, ["tcpdump"])
+    assert os.environ["POLYPHONY_LOCAL_MEASUREMENT"] == "previous diagnostics"
+    assert "POLYPHONY_MEASUREMENT_LOOPBACK" not in os.environ
 
 
 @pytest.mark.asyncio

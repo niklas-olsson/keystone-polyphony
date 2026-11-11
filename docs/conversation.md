@@ -196,8 +196,12 @@ identity files or databases. All three scenarios made zero model calls.
 ### Actual loopback traffic and reopened storage
 
 The separate real measurement command uses two independently keyed peers, the
-actual Hyperswarm sidecars and an isolated loopback bootstrap. It requires a
-working Linux `tcpdump` capture and the pinned sidecar dependencies:
+actual Hyperswarm sidecars and explicitly loopback-bound DHT sockets, including
+the test bootstrap. A loopback bootstrap address alone does not constrain a
+wildcard-bound peer's interface advertisement. The pinned HyperDHT instead
+advertises only loopback when its sockets are bound to `127.0.0.1`.
+This command requires a working Linux `tcpdump` capture and the pinned sidecar
+dependencies:
 
 ```sh
 npm ci --prefix src/liminal_bridge/sidecar
@@ -210,6 +214,18 @@ add `--sudo-capture`. The GitHub-hosted CI step explicitly installs tcpdump and
 uses this option. It does not elevate the Python harness, Node peers or local
 development sandbox. Capture is restricted to the loopback interface and the
 inventoried test UDP endpoints, including a separate calibration pair.
+
+The command temporarily enables both `POLYPHONY_LOCAL_MEASUREMENT=1` and
+`POLYPHONY_MEASUREMENT_LOOPBACK=1` for each scenario, restoring their exact prior
+values even when directory, log or bootstrap setup fails. Diagnostics alone
+retain ordinary networking. The separate loopback flag requires diagnostics
+and exactly one explicit `127.0.0.1:<port>` bootstrap, with a decimal port from
+1 through 65535; malformed opt-ins fail before transport construction.
+The opt-in injects the pinned HyperDHT with `host: '127.0.0.1'` and `nodes: []`
+into Hyperswarm. Empty known nodes also exclude ambient Pear configuration.
+Swarm identity and destruction ownership remain unchanged, as do ordinary
+sidecar networking, authentication, endpoint checks, gossip and time limits.
+No additional namespace privilege or general bind-address API is introduced.
 
 Each fresh scenario posts 10, 100 or 1,000 messages with fixed 256-byte content
 and equal-width request keys. Discovery and initial synchronization precede the
