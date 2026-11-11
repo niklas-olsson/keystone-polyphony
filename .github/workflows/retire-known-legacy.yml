@@ -1,0 +1,196 @@
+name: Retire two verified legacy runs
+
+on:
+  push:
+    branches: [maintenance/retire-legacy-42527277309]
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: maintenance-retire-legacy-42527277309
+  cancel-in-progress: false
+
+jobs:
+  retire:
+    if: github.repository == 'niklas-olsson/keystone-polyphony' && github.ref == 'refs/heads/maintenance/retire-legacy-42527277309'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - name: Cancel only the two verified retired runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import http.client
+          import json
+          import os
+          from pathlib import Path
+          import sys
+          import time
+
+          REPO = "niklas-olsson/keystone-polyphony"
+          REPO_ID = 1164123634
+          MAIN = "8868577f0ebf673845c6e561f6f99e44f0b6c737"
+          BRANCH = "refs/heads/maintenance/retire-legacy-42527277309"
+          # Stop the old provider-capable seed before handling the stuck merger.
+          TARGETS = (
+              {"id": 43118087829, "workflow_id": 237787293,
+               "path": ".github/workflows/swarm-node.yml",
+               "head_sha": "bc38767a320b9e3c6fd2f54d19bf9d0fd64d3ec1",
+               "head_branch": "main", "event": "schedule", "run_attempt": 1},
+              {"id": 42527277309, "workflow_id": 237375600,
+               "path": ".github/workflows/periodic-merge-main.yml",
+               "head_sha": "b92f2548b7336cb06f3438ef088ab559dc85ee6d",
+               "head_branch": "feat/lokimetasmith-sync",
+               "event": "workflow_dispatch", "run_attempt": 1},
+          )
+          ACTIVE = {"queued", "in_progress", "waiting", "pending", "requested"}
+          CONCLUSIONS = {None, "action_required", "cancelled", "failure", "neutral",
+                         "skipped", "stale", "success", "timed_out", "startup_failure"}
+          report = {"repository": REPO, "expected_main": MAIN,
+                    "targets": [], "http": [], "completed": False}
+
+          class Held(Exception):
+              pass
+
+          def request(operation, target=None):
+              routes = {"repository": "", "main": "/git/ref/heads/main"}
+              if target is not None:
+                  if target not in TARGETS:
+                      raise Held("unexpected_target")
+                  base = "/actions/runs/" + str(target["id"])
+                  routes.update(run=base, cancel=base + "/cancel",
+                                force_cancel=base + "/force-cancel")
+              if operation not in routes:
+                  raise Held("unexpected_operation")
+              method = "POST" if operation in {"cancel", "force_cancel"} else "GET"
+              entry = {"operation": operation, "run_id": target["id"] if target else None,
+                       "http_status": None}
+              report["http"].append(entry)
+              connection = http.client.HTTPSConnection("api.github.com", timeout=8)
+              try:
+                  connection.request(method, "/repos/" + REPO + routes[operation],
+                      headers={"Authorization": "Bearer " + os.environ["GH_TOKEN"],
+                               "Accept": "application/vnd.github+json",
+                               "X-GitHub-Api-Version": "2022-11-28",
+                               "User-Agent": "polyphony-one-off-retirement"})
+                  response = connection.getresponse()
+                  entry["http_status"] = response.status
+                  if method == "POST":
+                      return response.status
+                  if response.status != 200:
+                      raise Held("metadata_http_failure")
+                  data = response.read(65537)
+                  if len(data) > 65536:
+                      raise Held("metadata_size_exceeded")
+                  result = json.loads(data)
+                  if not isinstance(result, dict):
+                      raise Held("invalid_metadata")
+                  return result
+              except (OSError, http.client.HTTPException):
+                  entry["transport_error"] = True
+                  if method == "POST":
+                      return None  # Unknown acknowledgement; fresh reads decide.
+                  raise Held("metadata_transport_failure") from None
+              except (ValueError, UnicodeError):
+                  raise Held("invalid_metadata") from None
+              finally:
+                  connection.close()
+
+          def require_main():
+              value = request("main")
+              if (value.get("ref") != "refs/heads/main"
+                  or value.get("object", {}).get("type") != "commit"
+                  or value.get("object", {}).get("sha") != MAIN):
+                  raise Held("main_changed")
+
+          def observe(target, result):
+              value = request("run", target)
+              if any(value.get(key) != expected or type(value.get(key)) is not type(expected)
+                     for key, expected in target.items()):
+                  raise Held("target_identity_changed")
+              for key in ("repository", "head_repository"):
+                  identity = value.get(key) or {}
+                  if (type(identity.get("id")) is not int or identity["id"] != REPO_ID
+                      or identity.get("full_name") != REPO):
+                      raise Held("target_repository_changed")
+              status, conclusion = value.get("status"), value.get("conclusion")
+              if status not in ACTIVE | {"completed"} or conclusion not in CONCLUSIONS:
+                  raise Held("unknown_run_state")
+              if (status == "completed") != (conclusion is not None):
+                  raise Held("inconsistent_run_state")
+              result["observations"].append({"status": status, "conclusion": conclusion})
+              result["completed"] = status == "completed" and conclusion is not None
+              return result["completed"]
+
+          def poll(target, result):
+              for index in range(4):
+                  if index:
+                      time.sleep(2)
+                  if observe(target, result):
+                      return True
+              return False
+
+          try:
+              if (os.environ.get("GITHUB_REPOSITORY") != REPO
+                  or os.environ.get("GITHUB_REPOSITORY_ID") != str(REPO_ID)
+                  or os.environ.get("GITHUB_EVENT_NAME") != "push"
+                  or os.environ.get("GITHUB_REF") != BRANCH
+                  or os.environ.get("GITHUB_RUN_ATTEMPT") != "1"
+                  or not os.environ.get("GH_TOKEN")):
+                  raise Held("unexpected_execution_context")
+              repository = request("repository")
+              if (type(repository.get("id")) is not int or repository["id"] != REPO_ID
+                  or repository.get("full_name") != REPO):
+                  raise Held("repository_identity_changed")
+              for target in TARGETS:
+                  result = {**target, "completed": False, "observations": [],
+                            "normal_requested": False, "force_requested": False}
+                  report["targets"].append(result)
+                  try:
+                      require_main()
+                      if observe(target, result):
+                          continue
+                      result["normal_requested"] = True
+                      result["normal_http_status"] = request("cancel", target)
+                      if poll(target, result):
+                          continue
+                      if result["normal_http_status"] in {401, 403, 404}:
+                          raise Held("normal_cancellation_not_authorized_or_available")
+                      require_main()
+                      if observe(target, result):
+                          continue
+                      result["force_requested"] = True
+                      result["force_http_status"] = request("force_cancel", target)
+                      if not poll(target, result):
+                          raise Held("target_remains_active_after_single_force_attempt")
+                  except Held as error:
+                      result["reason"] = str(error)
+                  except Exception:
+                      result["reason"] = "unexpected_metadata_or_transport_failure"
+              report["completed"] = len(report["targets"]) == 2 and all(
+                  item["completed"] for item in report["targets"])
+          except Held as error:
+              report["reason"] = str(error)
+          except Exception:
+              report["reason"] = "unexpected_metadata_or_transport_failure"
+          finally:
+              text = json.dumps(report, indent=2, sort_keys=True) + "\n"
+              Path("known-legacy-retirement.json").write_text(text)
+              print(text, end="")
+              if os.environ.get("GITHUB_STEP_SUMMARY"):
+                  with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+                      summary.write("## Known legacy retirement\n\n```json\n" + text + "```\n")
+          sys.exit(0 if report["completed"] else 1)
+          PY
+      - name: Retain exact observed retirement outcome
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: known-legacy-retirement-${{ github.run_id }}-${{ github.run_attempt }}
+          path: known-legacy-retirement.json
+          if-no-files-found: error
+          retention-days: 14
