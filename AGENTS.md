@@ -7,15 +7,12 @@ You are not a second-class participant. You are a collaborator. These norms exis
 ## 1. Handling Tangents and Findings (Creating Issues)
 During your work, you might encounter technical debt, unrelated bugs, or interesting tangents that fall outside your immediate task scope. Please stay on track and avoid addressing them inline.
 
-Instead, document these findings by creating a follow-up issue on the **upstream repository**. Because agents often work in forks without direct access to the `gh` CLI or upstream repo, please use our automated issue-tracking pipeline.
+Record necessary findings on the **upstream repository** with concrete evidence, while keeping unrelated changes out of the current PR.
 
-**How to create a follow-up issue:**
-1. Create a markdown file inside the `.github/issues/` directory named with your issue topic (e.g., `.github/issues/add-database-caching.md`). Create the directory if it does not exist.
-2. The *first line* of the file must be a Markdown Header starting with exactly one `# ` (e.g., `# Feature: Add caching to database queries`). This will be parsed as the Issue Title.
-3. The rest of the file will be the issue body.
-4. Complete your task, commit, and push this file along with the rest of your changes.
-
-An automated GitHub Actions workflow can pick up `.md` files pushed to `.github/issues/`, triage and refine them via AI agents (configured via `TRIAGE_AGENTS`), and then publish the polished results to the upstream repository, already surgical and "ready for work". Every published issue is also logged in `meta/DISCOVERIES.md` to maintain a permanent record of the repository's evolution. This requires `UPSTREAM_PR_TOKEN` to be set in your fork secrets. If the token is missing, publishing is skipped and the file remains for manual follow-up. Please do not use `gh issue create` directly.
+**How to record a follow-up:**
+1. Prefer updating an existing agreed issue with concrete evidence and remaining work.
+2. Create a follow-up issue only for a necessary uncovered gap. If publication is unavailable, retain a Markdown draft in `.github/issues/`.
+3. Existing drafts remain durable source files. Automatic model triage and publication have been retired; publish reviewed findings through the normal issue interface.
 
 ## 2. Ensemble Setup & Swarm Initialization
 To participate in the choir and collaborate with other agents in the ensemble, you must initialize your environment and connect to the swarm.
@@ -46,21 +43,15 @@ The Liminal Bridge provides a high-urgency push protocol for direct coordination
 - **Stay Focused**: Keep your edits and Pull Requests focused on the requested task. Avoid mixing unrelated refactors into a feature task.
 - **Atomic Operations**: If you need to make structural changes, do so in isolated commits or separate PRs rather than coupling them with logic changes.
 
-## 5. Supported CLI Agents
-The `agent-issue-solver` workflow supports multiple CLI-based agents. To use a specific agent, configure the `AGENT_CLI` repository variable:
+## 6. Pull Request Admission and Provider Budget
 
-- **OpenCode** (Default): Uses `opencode`.
-- **OpenClaw**: A community-driven CLI for Anthropic's Claude. Set `AGENT_CLI` to `openclaw`.
-- **Claude Code**: Anthropic's official CLI. Set `AGENT_CLI` to `claude`.
+Ready owner-authored PRs use deterministic lint/full tests and direct main admission. They do not require OpenRouter, model review artifacts, review labels, staging or periodic promotion. Numeric PR-author and personal repository-owner IDs define ownership, not the triggering actor or association.
 
-OpenCode runs through `scripts/run-issue-agent.py` using `opencode run`, a streamed stdin prompt, and the `OPENROUTER_API_KEY` Actions secret (legacy `AGENT_API_KEY` remains a fallback). The runner checks completion events and isolates CLI state. Native Claude uses `--print`; OpenClaw retains `--yolo`. For other custom agents, use `AGENT_CLI_FLAGS` to pass necessary arguments.
+External-author PRs also require the repository owner's approval of the current head. One bounded advisory OpenRouter review is allowed per external PR head. No automatic retry, paid fallback or second decision-model call is used. Owner activity must never load a provider credential or call a model/catalog API through Actions.
 
-## 6. Specialized Review Styles
-When triggered via GitHub Actions, you might receive specialized review commands. Adjust your analysis focus accordingly:
+Keep actual changes-requested reviews and unresolved threads visible. A pending request, local development review or provider failure is not an independent GitHub approval. Architecture/ensemble obligations above still apply. Keep a PR draft or apply `hold-merge` until it is ready for admission.
 
-- `/oc review-workflow`: Focuses on **changed workflows** in `.github/workflows/`. Guideline: `docs/ci-cd.md`.
-- `/oc review-arch`: Focuses on **changed code files**. Guideline: project architecture in `README.md`, `docs/architecture.md`, and `AGENTS.md`.
-- `/oc review-security`: Focuses on **changed files with security implications** (secrets, tokens, permissions). Guideline: `AGENTS.md` and `docs/architecture.md`.
+Use [the CI policy](docs/ci-cd.md) for the exact tested revision, trusted controller, recovery and manual reconciliation rules. Native transport measurements are separate evidence; model/provider experiments are intentional local operations, not automatic CI.
 
 ## 7. Public Repository Secret Posture (Important)
 This repository is intentionally public. Treat it as a transparent collaboration space, not a confidential environment.

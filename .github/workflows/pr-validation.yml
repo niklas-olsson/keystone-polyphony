@@ -1,40 +1,94 @@
 name: PR Validation
+run-name: 'PR Validation #${{ inputs.pr_number }} head=${{ inputs.head_sha }} base=${{ inputs.base_sha }} merge=${{ inputs.merge_sha }}'
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review, labeled]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        required: true
+        type: string
+      head_sha:
+        required: true
+        type: string
+      base_sha:
+        required: true
+        type: string
+      merge_sha:
+        required: true
+        type: string
 
+# Candidate code runs only here, on a fresh hosted runner with no provider
+# secrets, write permission, persistent checkout credentials or shared cache.
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
-  group: pr-validation-${{ github.event.pull_request.number }}
+  group: pr-validation-${{ inputs.pr_number }}
   cancel-in-progress: true
 
 jobs:
-  pr-validation:
-    if: >-
-      github.event.pull_request.draft == false &&
-      contains(github.event.pull_request.labels.*.name, 'decision-merge')
+  validate:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
+      - name: Verify selected revisions
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          HEAD_SHA: ${{ inputs.head_sha }}
+          BASE_SHA: ${{ inputs.base_sha }}
+          MERGE_SHA: ${{ inputs.merge_sha }}
+        run: |
+          python3 - <<'PY'
+          import json, os, re, subprocess
+          def api(suffix):
+              return json.loads(subprocess.check_output([
+                  'gh', 'api', '--hostname', 'github.com',
+                  'repos/' + os.environ['GITHUB_REPOSITORY'] + '/' + suffix,
+              ], timeout=30))
+          pr_number = os.environ['PR_NUMBER']
+          assert re.fullmatch(r'[1-9][0-9]*', pr_number)
+          head, base, merge = [os.environ[key] for key in ('HEAD_SHA', 'BASE_SHA', 'MERGE_SHA')]
+          assert all(re.fullmatch(r'[0-9a-f]{40}', value) for value in (head, base, merge))
+          assert os.environ['GITHUB_SHA'] == base, 'Workflow must come from selected trusted main'
+          pr = api('pulls/' + pr_number)
+          assert pr['state'] == 'open' and pr['draft'] is False
+          assert pr['base']['ref'] == 'main'
+          assert pr['base']['repo']['full_name'] == os.environ['GITHUB_REPOSITORY']
+          assert pr['head']['sha'] == head and pr['base']['sha'] == base
+          assert pr['merge_commit_sha'] == merge
+          assert api('git/ref/heads/main')['object']['sha'] == base
+          commit = api('git/commits/' + merge)
+          assert commit['sha'] == merge and [p['sha'] for p in commit['parents']] == [base, head]
+          PY
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.merge_sha }}
+          fetch-depth: 2
           persist-credentials: false
+      - name: Verify checked out merge
+        env:
+          HEAD_SHA: ${{ inputs.head_sha }}
+          BASE_SHA: ${{ inputs.base_sha }}
+          MERGE_SHA: ${{ inputs.merge_sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$MERGE_SHA"
+          test "$(git show -s --format=%P HEAD)" = "$BASE_SHA $HEAD_SHA"
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Install test dependencies
+      - name: Install dependencies
         run: |
           python -m pip install -r requirements.txt
           npm ci --prefix src/liminal_bridge/sidecar
-      - name: Validate candidate
+      - name: Lint
+        run: bash scripts/lint.sh
+      - name: Test
         env:
           PYTHONPATH: src:.
-        run: |
-          bash scripts/lint.sh
-          python -m pytest -q
+        run: python -m pytest -q
