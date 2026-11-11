@@ -43,6 +43,13 @@ from src.liminal_bridge.storage import SQLiteStorageProvider
 TOPIC = "qualified-real-measurement"
 GOSSIP_SECONDS = 30
 SETTLE_SECONDS = 0.5
+WAIT_FAILURES = frozenset(
+    {
+        "capture did not become ready",
+        "real peers did not discover and authenticate",
+        "remote durable message IDs are missing",
+    }
+)
 
 
 class MeasuredMesh(LiminalMesh):
@@ -60,7 +67,7 @@ class MeasuredMesh(LiminalMesh):
                     future.set_result(message["snapshot"])
                 else:
                     future.set_exception(
-                        ValueError("invalid local diagnostic response")
+                        MeasurementError("invalid local diagnostic response")
                     )
             return
         await super()._handle_message(message)
@@ -102,7 +109,9 @@ async def stop_process(process, graceful_signal=signal.SIGTERM):
     except TimeoutError:
         process.kill()
         await asyncio.wait_for(process.wait(), 5)
-        raise ValueError("measurement subprocess required forced cleanup") from None
+        raise MeasurementError(
+            "measurement subprocess required forced cleanup"
+        ) from None
 
 
 async def stop_mesh(mesh):
@@ -128,7 +137,14 @@ async def until(predicate, check, seconds, description):
                     return value
                 await asyncio.sleep(0.05)
     except TimeoutError:
-        raise ValueError(description) from None
+        # Only harness-owned stage names belong in exported diagnostics.
+        # Do not export a private or future caller's unrecognized description.
+        message = (
+            description
+            if description in WAIT_FAILURES
+            else "measurement stage deadline exceeded"
+        )
+        raise MeasurementError(message) from None
 
 
 class Capture:

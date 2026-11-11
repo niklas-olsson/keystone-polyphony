@@ -271,6 +271,13 @@ The private work directory contains generated identities, databases and logs.
 Only `report.json` and a content-free failure `diagnostics.json` are retained as
 CI artifacts. Raw capture is removed after parsing or failure; do not upload the
 private directory. Local parser/counter fixtures are labelled unit evidence.
+
+Failure diagnostics preserve the harness's fixed capture-readiness,
+authenticated-peer-discovery and durable-message-delivery timeout messages.
+Malformed local diagnostic responses and forced subprocess cleanup also have
+fixed messages. Unrecognized descriptions and arbitrary exception text remain
+excluded from the exported artifact. These messages identify failed checks;
+they do not establish a transport root cause or qualify numerical measurements.
 Actual measurements and the corresponding issue #111 criterion require the
 real CI command to pass on the reviewed revision. A new command alone is not
 measured wire evidence or independent PR approval.

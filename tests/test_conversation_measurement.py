@@ -1,6 +1,7 @@
 """Measurement rejection/oracle tests. PCAP and native counters are fixtures."""
 
 from copy import deepcopy
+import asyncio
 import importlib.util
 import json
 from pathlib import Path
@@ -376,3 +377,105 @@ def test_sidecar_disabled_mode_framing_and_local_only_diagnostics():
         timeout=20,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def load_real_measurement():
+    spec = importlib.util.spec_from_file_location(
+        "real_measurement", ROOT / "scripts/measure-conversation-real.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "description, expected",
+    [
+        ("capture did not become ready", "capture did not become ready"),
+        (
+            "real peers did not discover and authenticate",
+            "real peers did not discover and authenticate",
+        ),
+        (
+            "remote durable message IDs are missing",
+            "remote durable message IDs are missing",
+        ),
+        (
+            "private-provider-token=must-never-be-exported",
+            "measurement stage deadline exceeded",
+        ),
+    ],
+)
+async def test_harness_timeout_retains_only_its_allowlisted_stage(
+    description, expected
+):
+    module = load_real_measurement()
+    with pytest.raises(MeasurementError) as error:
+        await module.until(lambda: False, lambda: None, 0, description)
+    assert str(error.value) == expected
+
+
+@pytest.mark.asyncio
+async def test_invalid_local_diagnostic_keeps_untrusted_fields_private(tmp_path):
+    module = load_real_measurement()
+    peer = module.make_peer(tmp_path, "a", "scope", "127.0.0.1:1")
+    future = asyncio.get_running_loop().create_future()
+    peer.pending_measurement["request"] = future
+    try:
+        await peer._handle_message(
+            {
+                "type": "local_measurement",
+                "request_id": "request",
+                "snapshot": {},
+                "private-provider-token": "must-never-be-exported",
+            }
+        )
+        with pytest.raises(
+            MeasurementError, match="^invalid local diagnostic response$"
+        ):
+            future.result()
+    finally:
+        peer.storage.conn.close()
+
+
+@pytest.mark.parametrize(
+    "failure, exported",
+    [
+        (
+            MeasurementError("real peers did not discover and authenticate"),
+            "real peers did not discover and authenticate",
+        ),
+        (
+            ValueError("private-provider-token=must-never-be-exported"),
+            "actual qualification failed; inspect private local diagnostics",
+        ),
+    ],
+)
+def test_harness_exports_safe_stage_without_arbitrary_exception_text(
+    tmp_path, monkeypatch, capsys, failure, exported
+):
+    module = load_real_measurement()
+    directory = tmp_path / "private-measurement"
+
+    async def failed_run(*args):
+        raise failure
+
+    monkeypatch.setattr(module, "run", failed_run)
+    monkeypatch.setattr(
+        module.sys, "argv", ["measurement", "--work-dir", str(directory)]
+    )
+    monkeypatch.setattr(module.os, "umask", lambda mode: None)
+    assert module.main() == 1
+    captured = capsys.readouterr()
+    artifact = (directory / "diagnostics.json").read_text()
+    expected = {
+        "passed": False,
+        "error_type": type(failure).__name__,
+        "error": exported,
+    }
+    assert json.loads(captured.err) == json.loads(artifact) == expected
+    assert captured.out == ""
+    assert not (directory / "report.json").exists()
+    assert "must-never-be-exported" not in artifact + captured.err + captured.out
+    assert str(directory) not in artifact + captured.err + captured.out
