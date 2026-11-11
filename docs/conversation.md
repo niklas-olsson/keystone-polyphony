@@ -192,3 +192,85 @@ fixed fixture, encoding and SQLite page layout; the script checks bounded frame
 growth and reports fresh measurements in CI. Total retained storage still grows
 with discussion. The CI artifact contains only the measurement JSON, not node
 identity files or databases. All three scenarios made zero model calls.
+
+### Actual loopback traffic and reopened storage
+
+The separate real measurement command uses two independently keyed peers, the
+actual Hyperswarm sidecars and an isolated loopback bootstrap. It requires a
+working Linux `tcpdump` capture and the pinned sidecar dependencies:
+
+```sh
+npm ci --prefix src/liminal_bridge/sidecar
+python scripts/measure-conversation-real.py \
+  --work-dir /absolute/new/private/conversation-real-measurement
+```
+
+On an authorized host where only the capture executable needs elevated access,
+add `--sudo-capture`. The GitHub-hosted CI step explicitly installs tcpdump and
+uses this option. It does not elevate the Python harness, Node peers or local
+development sandbox. Capture is restricted to the loopback interface and the
+inventoried test UDP endpoints, including a separate calibration pair.
+
+Each fresh scenario posts 10, 100 or 1,000 messages with fixed 256-byte content
+and equal-width request keys. Discovery and initial synchronization precede the
+steady window. The harness requires exact remote message IDs through bounded
+history pages and reopens both identities/databases to verify the retained IDs.
+There is no delivery fixture, provider configuration or inference. This command
+does not measure cold discovery, catch-up, managed child sessions or model
+latency. Its timing includes observation, SQLite work and configured settling;
+it is not a throughput or latency benchmark.
+
+The report keeps three accounting layers separate:
+
+| Layer | Values | Interpretation |
+| --- | --- | --- |
+| Actual application stream | Exact UTF-8 JSON-plus-newline bytes submitted to each `conn.write`, frame counts and interval min/max; received buffer bytes; backpressure and errors | Submissions and observations, not remote durable acknowledgements. Aggregate frames may include gossip and synchronization. |
+| Native transport | Separate per-stream and per-instance byte/packet deltas, retransmit and kernel-drop counters where available | Pinned library accounting. The scopes overlap. Unsupported counters remain null with a reason. |
+| Captured loopback packets | Packet count, original virtual frame length, IP total length, UDP length and UDP payload length for each direction | Actual capture from one virtual interface. Retransmissions remain counted. These are not physical Ethernet or WAN byte costs. |
+
+The installed `udx-native` CMake file records the native source revision. At the
+current pin, [`libudx` accounting](https://github.com/holepunchto/libudx/blob/25b063b/src/udx.c)
+uses UDP payload lengths and can advance transmit counters after non-EAGAIN
+send errors. Native transmit counts therefore cannot substitute for captured
+packets or successful delivery. Instance counts also include transport/control
+traffic outside the application stream. Do not add stream and instance totals.
+The 16-bit stream retransmit delta is reported only when the known stream
+transmitted-packet delta is below 65,536, which rules out an invisible full wrap.
+Otherwise that metric is null with an explicit wrap-ambiguity reason.
+
+Bridge diagnostics require the explicit `POLYPHONY_LOCAL_MEASUREMENT=1` process
+option and a fixed local stdin request. They are disabled in ordinary operation,
+never sent to peers and expose only bounded counters and endpoint metadata.
+They contain no messages, keys or credentials. A local window reset makes the
+frame extrema refer to this corpus; the native counters remain cumulative and
+are differenced separately. The packet window encloses both local diagnostic
+snapshots, which are not a globally atomic observation.
+
+Two known-size UDP datagrams calibrate one captured record in each direction.
+The parser reads one bounded classic-PCAP Ethernet/IPv4 UDP capture and rejects
+unknown formats, invalid lengths, fragmentation, truncation, un-attributed
+endpoints, missing final capture statistics or reported drops. It counts packet
+records rather than tcpdump's platform-dependent received-by-filter statistic.
+It never removes identical packets to deduplicate presumed loopback copies.
+Missing native transport, capture permission or attributable peer packets fails
+qualification; there is no successful fixture fallback.
+
+Storage measurements include baseline, quiescent and closed main databases,
+journal/WAL/SHM presence and file sizes, allocated file blocks when available,
+and SQLite journal mode, page size/count and freelist. The harness preserves
+the configured journal mode. These files include retained node/protocol state,
+not solely message text, and they continue growing with retained history.
+
+The command bounds each corpus and all cleanup, limits raw capture to 64 MiB
+and 200,000 packets, and keeps the overall existing 30-minute CI ceiling. The
+real command has a ten-minute overall budget. Version information, observed
+durations, gossip/settling settings and zero model calls are included in the
+aggregate report. No inferred idle-traffic subtraction changes the totals.
+
+The private work directory contains generated identities, databases and logs.
+Only `report.json` and a content-free failure `diagnostics.json` are retained as
+CI artifacts. Raw capture is removed after parsing or failure; do not upload the
+private directory. Local parser/counter fixtures are labelled unit evidence.
+Actual measurements and the corresponding issue #111 criterion require the
+real CI command to pass on the reviewed revision. A new command alone is not
+measured wire evidence or independent PR approval.

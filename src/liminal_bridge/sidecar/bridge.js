@@ -2,6 +2,8 @@ const Hyperswarm = require('hyperswarm');
 const crypto = require('hypercore-crypto');
 const b4a = require('b4a');
 const readline = require('readline');
+const measurement = process.env.POLYPHONY_LOCAL_MEASUREMENT === '1'
+  ? require('./measurement')() : null;
 
 // Get topic from args
 const topicHex = process.argv[2];
@@ -80,6 +82,9 @@ swarm.on('connection', (conn, info) => {
     }
   });
 
+  // Observe bytes only after the ordinary stream reader is installed.
+  if (measurement) measurement.track(conn);
+
   conn.on('close', () => {
     peers.delete(peerId);
     process.stdout.write(JSON.stringify({ type: 'peer_disconnected', peer_id: peerId }) + '\n');
@@ -106,12 +111,18 @@ rl.on('line', (line) => {
     if (command.type === 'broadcast') {
       const msg = JSON.stringify(command.payload) + '\n';
       for (const [id, conn] of peers) {
+        const ticket = measurement && measurement.beforeWrite(conn, msg);
         try {
-          conn.write(msg);
+          const writable = conn.write(msg);
+          if (measurement) measurement.written(ticket, writable);
         } catch (err) {
+          if (measurement) measurement.failed(ticket);
           // Ignore write errors to dead connections
         }
       }
+    } else if (measurement && command.type === 'local_measurement') {
+      const response = measurement.command(command);
+      if (response) process.stdout.write(JSON.stringify(response) + '\n');
     } else if (command.type === 'join') {
       const tHex = command.payload.topic;
       if (!discoveries.has(tHex)) {
