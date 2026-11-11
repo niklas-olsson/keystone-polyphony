@@ -59,9 +59,11 @@ their own credentials and should never request a maintainer's personal token.
 ## Issues and conduct
 
 Update existing agreed issues when possible. Create a follow-up only for a
-necessary uncovered gap. Existing `.github/issues/` drafts remain available, but
-are no longer automatically refined or published by a model. Publish reviewed
-findings through the normal issue interface when appropriate.
+necessary uncovered gap. If publication is unavailable, retain a Markdown draft
+in `.github/issue-drafts/`. Keep the legacy `.github/issues/` path empty while the
+[historical queued workflow](docs/ci-cd.md#historical-queued-run) remains unresolved.
+Earlier drafts remain preserved in Git history. Publish reviewed findings through
+the normal issue interface when appropriate.
 
 Follow the [Code of Conduct](CODE_OF_CONDUCT.md). Respectful collaboration applies
 to human and autonomous contributors alike.
