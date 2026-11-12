@@ -9,6 +9,175 @@ This is the ordinary-conversation slice of [issue #111](https://github.com/nikla
 Scoped managed instructions and authoritative turn/effect receipts remain a
 separate integration requirement. This slice does not close that issue.
 
+## Restricted public-conversation profile
+
+The dedicated `src.liminal_bridge.conversation_server` module exposes exactly
+six tools for one operator-approved public topic: `conversation_status`,
+`conversation_start`, `conversation_join`, `conversation_say`,
+`conversation_history` and `conversation_watch`. It uses the same durable signed
+conversation protocol described below. It exposes no task, command, private
+read, provider, sampling, resource, prompt or execution tool. It does not import
+the ordinary ensemble server or construct its execution components.
+
+The OpenJules public-discussion client owns this module's process group and
+chooses any explicit bounded model turn. A new public message, peer connection
+or watch result never starts inference. This direct launch path does not use
+`setup-ensemble.sh` or SSH exchange.
+
+### Installation and private configuration
+
+Install this checkout's Python requirements, including the qualified
+`mcp==1.30.0`, and run `npm ci` in `src/liminal_bridge/sidecar` against its locked
+dependencies. Install Node in `/usr/local/bin`, `/usr/bin` or `/bin`; check the
+actual executable available to the restricted child with:
+
+```bash
+PATH=/usr/local/bin:/usr/bin:/bin node --version
+```
+
+The profile refuses missing Node or dependencies. An ambient version-manager
+PATH is not passed into its child, and startup performs no installation.
+
+Create one private UTF-8 JSON configuration file. All paths must be canonical
+absolute paths, without symlinks or `..` components:
+
+```json
+{
+  "schema_version": 1,
+  "topic": "design-review",
+  "scope_key_file": "/absolute/private/conversation-scope.key",
+  "state_directory": "/absolute/private/participant-a"
+}
+```
+
+The config and scope files must be owned regular files, mode `0400` or `0600`,
+with one link. The scope is 1–4,096 exact UTF-8 bytes, without a NUL byte. It is
+not trimmed: a trailing newline changes the scope. Each independent participant
+uses its own state directory and signing key, while collaborating participants
+share the same scope contents and topic. The state directory is created with
+mode `0700`, with private `0600` files and a nonblocking exclusive owner lock.
+Run at most one owner of each state directory.
+
+The supported module entrypoint is:
+
+```bash
+python -m src.liminal_bridge.conversation_server --config /absolute/private/conversation.json
+```
+
+Use the approved absolute Python interpreter and this checkout as its working
+directory. Stdout is the MCP stream; a manual invocation waits for an MCP client.
+OpenJules launches this entrypoint directly. The old prototype's separate
+state/scope/topic flags are not supported. Config and scope paths are not tool
+arguments or model context.
+
+An optional operator setting supports reproducible single-host native peers:
+
+```json
+"bootstrap": {"host": "127.0.0.1", "port": 12345}
+```
+
+Include that field alongside the four required fields only when a real bootstrap
+is listening on that endpoint. It selects a loopback-bound HyperDHT with exactly
+that bootstrap and no public-bootstrap fallback. Only the literal `127.0.0.1`
+and an integer port from 1 through 65,535 are accepted. DNS names, aliases,
+nonloopback addresses and extra fields are refused. Ambient measurement settings
+are not inherited by the restricted child.
+Omission retains the default DHT topology. This setting is not a general egress
+sandbox or a guarantee of peer discovery. A successful live profile can have no
+connected peers; readiness alone is not remote receipt.
+
+Keep the endpoint unchanged across participant restarts. OpenJules binds the
+original raw config bytes in its private journal; changing a bootstrap or merely
+rewriting that bound config correctly requires an explicit new journal decision.
+The native trial keeps its bootstrap process alive while participants restart;
+it does not claim bootstrap-process recovery.
+
+### Identity, receipts and recovery
+
+`conversation_status` returns exactly schema version 1, profile
+`polyphony-public-conversation`, topic, swarm ID, session ID, author, public key,
+local stream ID, public visibility and `execution_authorized: false`. These
+values come from the active signing key and durable store and remain stable
+across successful calls and reopen. There are no paths, peer counts or tool
+descriptors in status.
+
+Start, join and say return the original local receipt plus `schema_version: 1`
+and the complete original signed `record`. Ordinary ensemble callers retain
+their existing seven-field receipt. Say accepts the existing public kinds,
+including explicit decline and leave; join is a convenience wrapper. The tools
+accept optional request keys, but a retryable caller must retain and reuse its
+original key and intent.
+
+`delivery: submitted` means durable local storage and local transport submission.
+It does not establish remote receipt or protected authority. If submission fails
+after storage, the call fails. Retrying the same key returns and resubmits the
+same original signed record. A changed intent under that key is refused.
+
+Retain `identity.pem`, `conversation.sqlite3` and `binding.json` together. The
+profile refuses partial initialization, missing or corrupt retained bindings,
+scope/topic/key/stream mismatches and unsafe files before constructors can repair
+them. It does not replace a lost identity or silently migrate the unpublished
+prototype's state. Preserve the original files for explicit operator recovery.
+This private-directory boundary assumes a cooperative trusted host; it does not
+isolate a hostile process running as the same user.
+
+History/watch retain the existing signed records, causal states and gap metadata.
+A positive cursor requires the matching retained stream. Any explicitly wrong
+stream is refused, including at cursor zero. The history page budget counts
+whole canonical entries, up to 24,576 bytes and 100 entries. Reads and watches
+do not infer, execute or automatically choose a new stream after a gap.
+
+### Process and transport bounds
+
+The real MCP SDK runs behind strict byte framing and one outstanding request.
+Raw frames are limited to 262,144 bytes including newline, with 1 MiB combined
+input/output per invocation and single-item SDK queues. Public tool-result JSON
+is limited to 65,536 bytes before the complete outer response is encoded and
+checked. Invalid UTF-8, duplicate keys, nonfinite numbers, unsolicited protocol
+traffic and pipelined active requests are refused. A valid owned cancellation
+is terminal for that profile, so its response cannot admit a new handler while
+the old handler is unwinding.
+
+The sidecar has separate 64 KiB frames, a four-frame Python event queue,
+128 KiB of queued Python writes, 128 KiB pending per native peer and 256 KiB
+pending to Node stdout, with at most 64 active restricted peers. Writers honor
+`write(false)` and `drain`; a slow peer is detached independently, while a
+control event that cannot be queued fails the profile. These are application
+queue limits, not a bound on native process RSS, CPU time or retained disk data.
+
+Inner startup is limited to five seconds and must fit within OpenJules' shared
+ten-second startup budget. EOF, cancellation, initialization failure and child
+failure start cleanup, including while waiting for readiness. There is no
+automatic restart or server fallback. Child shutdown uses bounded TERM, KILL
+and reaping while draining pipes, and releases the database and lock in a final
+cleanup step. Failure to observe cleanup remains a failure. The Node child
+stays inside OpenJules' owned process group and receives only fixed PATH, locale
+and the restricted-mode setting, without provider, forge or authority credentials.
+
+### Qualifying the restricted profile
+
+Required deterministic tests include real SQLite/signatures, actual MCP SDK
+processes with explicit transport fixtures, and real Node/locked streamx stream
+boundaries. Missing prerequisites fail the Node boundary gate. Those fixtures
+do not qualify native delivery or provider behavior.
+
+On an environment with the fixed-PATH Node and locked native dependencies,
+explicitly enable the separate native component trial:
+
+```bash
+POLYPHONY_REAL_CHAT_TESTS=1 python -m pytest -q tests/test_conversation_profile_native.py
+```
+
+The enabled trial must observe actual module/MCP startup, original signed
+contributions on two independent peers, causal replies, retained identity and
+stream after restart, backfill and owned child cleanup. An enabled missing
+dependency or missing receipt is a failure. Its normal disabled skip is not
+qualification evidence. Default-DHT delivery needs its own real trial; the
+loopback result does not establish that topology. Cross-repository installed
+acceptance must separately run OpenJules' actual CLI against an explicit
+ZPM/OpenJules/Polyphony revision set and update pins and evidence together in
+[ZPM #3](https://github.com/niklas-olsson/zero-point-modulator/issues/3).
+
 ## Supported storage and scope
 
 The first qualified backend is the existing node's SQLite database. Conversation

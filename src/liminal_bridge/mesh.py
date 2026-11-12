@@ -55,7 +55,16 @@ class LiminalMesh:
         mqtt_host: Optional[str] = None,
         mqtt_port: int = 1883,
         ble_enabled: bool = False,
+        conversation_only: bool = False,
+        conversation_identity: Optional[ed25519.Ed25519PrivateKey] = None,
     ):
+        if type(conversation_only) is not bool:
+            raise ValueError("conversation_only must be a boolean")
+        if conversation_only and not isinstance(
+            conversation_identity, ed25519.Ed25519PrivateKey
+        ):
+            raise ValueError("conversation-only transport requires its retained key")
+        self.conversation_only = conversation_only
         self.secret_key = secret_key
         # Generate topic hash for the swarm
         self.topic = hashlib.sha256(secret_key.encode()).hexdigest()
@@ -68,7 +77,11 @@ class LiminalMesh:
         self._snapshot_task: Optional[asyncio.Task] = None
 
         # Identity Management
-        self.private_key = self._load_or_create_identity()
+        self.private_key = (
+            conversation_identity
+            if conversation_only
+            else self._load_or_create_identity()
+        )
         self.public_key = self.private_key.public_key()
 
         # Public Key as Hex String for transmission
@@ -117,7 +130,8 @@ class LiminalMesh:
 
         # Persistence
         self.storage.init_db()
-        self._load_state()
+        if not conversation_only:
+            self._load_state()
         self.conversation_error = (
             "durable conversation requires the qualified SQLite storage backend"
         )
@@ -506,6 +520,10 @@ class LiminalMesh:
 
     async def start(self):
         """Starts the Node.js sidecar and begins listening."""
+        if self.conversation_only:
+            raise ConversationUnsupported(
+                "conversation-only transport requires its dedicated process owner"
+            )
         self.running = True
 
         # Check for idle wakeup and trigger warmup if needed
@@ -1058,6 +1076,9 @@ class LiminalMesh:
             print(f"DEBUG: Node {self.node_id} connected to peer {msg.get('peer_id')}")
             peer_id = msg.get("peer_id")
             self.peers.add(peer_id)
+            if self.conversation_only:
+                await self.require_conversation().announce()
+                return
             # Re-broadcast my current thought to new peer (as a raw broadcast)
             if self.node_id in self.thoughts:
                 thought = self.thoughts[self.node_id]
@@ -1081,13 +1102,19 @@ class LiminalMesh:
             pid = msg.get("peer_id")
             if pid in self.peers:
                 self.peers.remove(pid)
+            if self.conversation_only:
+                self.peer_map.pop(pid, None)
+                return
             await self.broadcast_network_state()
 
         elif msg_type == "message":
             # Track activity from any peer message
-            self.touch_activity()
+            if not self.conversation_only:
+                self.touch_activity()
 
             payload = msg.get("payload", {})
+            if self.conversation_only and not isinstance(payload, dict):
+                return
 
             # Verify signature (must be present for all messages now)
             if "e" in payload and "s" in payload and "p" in payload:
@@ -1111,6 +1138,26 @@ class LiminalMesh:
 
             try:
                 decrypted_payload = self._decrypt(payload["e"])
+
+                if self.conversation_only:
+                    # Authenticate before dispatch; do not touch legacy clocks,
+                    # registry, KV, welcome state or execution callbacks.
+                    derived = hashlib.sha256(bytes.fromhex(payload["p"])).hexdigest()[
+                        :16
+                    ]
+                    if (
+                        not isinstance(decrypted_payload, dict)
+                        or decrypted_payload.get("origin") != derived
+                        or not isinstance(decrypted_payload.get("type"), str)
+                        or decrypted_payload.get("type")
+                        not in {"chat_delta", "chat_hello", "chat_request", "chat_page"}
+                    ):
+                        return
+                    await self._handle_payload(decrypted_payload)
+                    peer_id = msg.get("peer_id")
+                    if isinstance(peer_id, str):
+                        self.peer_map[peer_id] = derived
+                    return
 
                 # Verify identity registry
                 origin = decrypted_payload.get("origin")
@@ -1157,6 +1204,18 @@ class LiminalMesh:
 
     async def _handle_payload(self, payload: Dict[str, Any]):
         """Handles application-level logic."""
+        if self.conversation_only:
+            if (
+                isinstance(payload, dict)
+                and isinstance(payload.get("type"), str)
+                and payload.get("type")
+                in {"chat_delta", "chat_hello", "chat_request", "chat_page"}
+            ):
+                try:
+                    await self.require_conversation().handle(payload)
+                except ConversationError:
+                    pass  # Invalid chat cannot fall through into another protocol.
+            return
         p_type = payload.get("type")
         origin = payload.get("origin")
         remote_vc = payload.get("vc", {})

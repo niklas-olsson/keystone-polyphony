@@ -1,4 +1,4 @@
-mcp>=1.0.0,<2.0.0  # TODO: migrate to mcp v2 (FastMCP -> MCPServer), see TODO.md
+mcp==1.30.0  # Qualified public-conversation SDK; migrate v2 separately.
 openai>=1.0.0
 pydantic
 pytest

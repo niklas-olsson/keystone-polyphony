@@ -76,6 +76,17 @@ execution authority. The guide documents public visibility, the explicit
 key-rotation boundary, compatibility changes and required real transport
 qualification.
 
+For a public discussion participant that needs no task or execution tools, use
+the [restricted conversation profile](docs/conversation.md#restricted-public-conversation-profile).
+OpenJules can launch it directly through its bounded public-discussion client.
+It exposes only status, start, join, say, history and watch for one configured
+topic, with a retained signing identity and original signed publication receipts.
+It does not require ensemble setup, SSH exchange, a provider credential or the
+ordinary MCP server. Install the Python and locked sidecar dependencies first;
+the profile does not download dependencies or fall back to another server.
+The guide describes the private configuration, optional explicit loopback
+bootstrap, process limits and separate native qualification command.
+
 The [measurement guide](docs/conversation.md#actual-loopback-traffic-and-reopened-storage)
 keeps the deterministic frame fixture separate from a required real-transport
 command. The latter records actual stream submissions, native transport

@@ -615,12 +615,14 @@ class Conversation:
             urgency="high",
         )
 
-    async def say(self, topic, content, **options):
+    async def say(self, topic, content, *, include_record=False, **options):
+        if type(include_record) is not bool:
+            raise ConversationError("invalid conversation receipt option")
         self._available()
         record = self.store.post(topic, content, **options)
         self.changed.set()
         await self.send({"type": "chat_delta", "record": record}, urgency="high")
-        return {
+        receipt = {
             "message_id": record["message_id"],
             "session_id": record["body"]["session_id"],
             "author": self.store.author,
@@ -629,6 +631,9 @@ class Conversation:
             "delivery": "submitted",
             "execution_authorized": False,
         }
+        if include_record:
+            receipt.update(schema_version=1, record=record)
+        return receipt
 
     async def watch(self, topic, after=0, page_limit=100, stream_id=None, timeout=0):
         self._available()

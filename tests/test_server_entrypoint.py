@@ -65,4 +65,4 @@ async def test_mcp_client_can_initialize_and_list_tools(tmp_path):
 
 def test_dependency_pin_stays_with_supported_mcp_api():
     requirements = (ROOT / "requirements.txt").read_text()
-    assert "mcp>=1.0.0,<2.0.0" in requirements
+    assert "mcp==1.30.0" in requirements
