@@ -2,6 +2,17 @@ const Hyperswarm = require('hyperswarm');
 const crypto = require('hypercore-crypto');
 const b4a = require('b4a');
 const readline = require('readline');
+const conversationSetting = process.env.POLYPHONY_CONVERSATION_ONLY;
+if (conversationSetting !== undefined) {
+  if (conversationSetting !== '1') {
+    process.stderr.write('Restricted conversation opt-in refused.\n');
+    process.exit(1);
+  } else {
+    require('./conversation-framing').runRestricted({
+      Hyperswarm, b4a, runtime: process,
+    });
+  }
+} else {
 const measurement = process.env.POLYPHONY_LOCAL_MEASUREMENT === '1'
   ? require('./measurement')() : null;
 const loopbackSetting = process.env.POLYPHONY_MEASUREMENT_LOOPBACK;
@@ -192,3 +203,5 @@ process.on('uncaughtException', (err) => {
 process.on('unhandledRejection', (err) => {
   // Catch rogue ETIMEDOUT promises
 });
+
+}

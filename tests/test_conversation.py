@@ -31,6 +31,38 @@ def node(tmp_path, name):
     )
 
 
+@pytest.mark.asyncio
+async def test_original_receipt_shape_stays_default_and_opt_in_returns_original_record(
+    tmp_path,
+):
+    current = node(tmp_path, "receipt")
+    current._send_to_sidecar = AsyncMock()
+    try:
+        receipt = await current.conversation.say(
+            "design", "original", request_key="one"
+        )
+        assert set(receipt) == {
+            "message_id",
+            "session_id",
+            "author",
+            "stored",
+            "visibility",
+            "delivery",
+            "execution_authorized",
+        }
+        original = current.conversation.store.history("design")["messages"][0]["record"]
+        extended = await current.conversation.say(
+            "design", "original", request_key="one", include_record=True
+        )
+        assert extended == receipt | {"schema_version": 1, "record": original}
+        assert current.conversation.store.high_water() == 1
+        with pytest.raises(ConversationError):
+            await current.conversation.say("design", "no", include_record="yes")
+        assert current._send_to_sidecar.await_count == 2
+    finally:
+        current.storage.conn.close()
+
+
 class SignedTransportFixture:
     """Deliver real encrypted signed envelopes; discovery/network are fixtures."""
 
