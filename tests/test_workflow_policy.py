@@ -1,5 +1,7 @@
 """Guard the active workflow authority/cost perimeter after retiring staging."""
 
+import ast
+from fnmatch import fnmatchcase
 from pathlib import Path
 import re
 
@@ -72,6 +74,28 @@ def test_privileged_controller_uses_main_and_review_event_is_only_a_signal():
     assert "permissions: {}" in signal and "pull_request_review:" in signal
     assert "pull_request_review_thread:" not in signal
     assert "checkout@" not in signal and "secrets." not in signal
+
+
+def test_completion_signal_matches_revision_bearing_validation_without_recursion():
+    text = (WORKFLOWS / "pr-controller.yml").read_text()
+    filters = re.search(r"^    workflows: (\[.*\])$", text, re.MULTILINE)
+    assert filters is not None
+    patterns = ast.literal_eval(filters.group(1))
+    # Actual successful run 43122473923 did not match the former static filter.
+    observed_name = (
+        "PR Validation #121 head=3d3d236a797edf0712392b093a048d992d4ff8cf "
+        "base=14eaab5c2da507225894f15fa18b749ed05bb841 "
+        "merge=7ad7c9693d998644716e015257061c2b2a79d631"
+    )
+    for name in ("PR Validation", "PR Review Signal", observed_name):
+        assert any(fnmatchcase(name, pattern) for pattern in patterns), name
+    for name in (
+        "Direct Main Admission",
+        "External PR Review #121 head=abc base=def merge=ghi",
+        "Collaboration Validation",
+        "Retired Automation Maintenance",
+    ):
+        assert not any(fnmatchcase(name, pattern) for pattern in patterns), name
 
 
 def test_native_qualification_requires_explicit_opt_in():
