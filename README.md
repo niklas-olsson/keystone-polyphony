@@ -155,8 +155,12 @@ If you are configuring the Jules MCP client for the first time, use the interact
     npm run setup
     ```
 
-### 7. Injecting Swarm Secrets (CI/CD)
-To prepare a fork for autonomous agent workflows, inject the necessary secrets and variables into your repository:
+### 7. Optional runtime and tool configuration
+
+Owner-authored PR CI requires no swarm or model credentials. See the
+[contribution and admission policy](docs/ci-cd.md) for the lightweight PR flow.
+Use this helper only when intentionally configuring optional runtime or tool
+credentials for your own setup:
 
 ```bash
 ./scripts/inject-secrets.sh

@@ -28,6 +28,27 @@ repository lint and the full deterministic pytest suite. A failed, skipped,
 cancelled, missing or pending check cannot admit a PR. An actual
 changes-requested review or unresolved review thread also holds admission.
 
+The controller scans all ready PRs before waiting, so a queued validation does
+not delay a later already-qualified PR. It then observes newly acknowledged
+dispatches and positively attributed pending validations within the same
+invocation. Normal progress does not depend on another workflow-completion
+event. Existing completion, PR, main and manual signals can still reconcile work.
+
+Waiting uses one fair queue with at most 20 individual validation probes across
+all pending PRs, spaced 15 seconds apart, and one 300-second monotonic scheduling
+budget. Each probe reuses the trusted validation lookup, usually three REST reads
+for a pending run when the listing fits one page. Already-started API calls retain
+their existing 60-second timeouts and may finish after the scheduling deadline;
+the workflow's existing ten-minute job limit remains the outer bound. Observation
+never reserves work, dispatches validation or calls a provider. Failed, cancelled,
+malformed or unavailable evidence stops that plan immediately. Missing visibility
+after an acknowledged dispatch does not cause automatic redispatch.
+
+An observed success returns through normal admission, first comparing the fresh
+candidate to the exact retained waiting plan before any side effect. A moved
+head holds that plan; a moved main requires current-policy reconciliation. The
+latest actual run, attempt, job, steps and review evidence are checked again.
+
 After qualification, the controller publishes that already-tested merge object
 to main. It checks fast-forward ancestry and uses an explicit selected-main Git
 lease. If main changes, the old candidate cannot be published, even if the new
@@ -111,6 +132,7 @@ concrete held/dispatched/published result for each examined PR.
 | Review hold | Resolve the thread or have the reviewer update/dismiss the actual changes-requested review; after thread resolution alone, run reconciliation manually |
 | External approval missing or stale | Repository owner reviews and approves the current PR head |
 | Validation dispatch was recorded but no run appears | Inspect Actions first, then use the targeted manual retry below |
+| The shared observation budget expired while validation was pending or invisible | Inspect the recorded revisions and run/attempt; once validation finishes, run ordinary reconciliation if no later signal has done so. Timeout does not redispatch validation or the controller |
 | Test tree published but PR closure not observed | Inspect actual main and PR head; do not claim the moved PR merged |
 | GitHub refuses workflow-file publication or a branch rule | A maintainer uses the applicable existing permission after verifying the reported exact candidate and CI; no model retry is needed |
 

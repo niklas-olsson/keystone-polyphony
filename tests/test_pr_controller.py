@@ -959,3 +959,447 @@ def test_post_push_confirmation_timeout_retains_exact_evidence_without_leaking_c
     assert github.dispatches == []
     output = capsys.readouterr()
     assert canary not in json.dumps(result) + output.out + output.err
+
+
+class ObservationClock:
+    def __init__(self):
+        self.now = 0
+        self.sleeps = []
+        self.on_sleep = None
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.sleeps.append(seconds)
+        self.now += seconds
+        if self.on_sleep:
+            self.on_sleep()
+
+
+@pytest.fixture
+def observation_clock(monkeypatch):
+    clock = ObservationClock()
+    monkeypatch.setattr(controller.time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(controller.time, "sleep", clock.sleep)
+    return clock
+
+
+def admission_report(monkeypatch, tmp_path, github):
+    monkeypatch.setattr(controller, "GitHub", lambda _: github)
+    monkeypatch.setattr(
+        controller,
+        "git",
+        lambda *args: subprocess.CompletedProcess(args, 0, stdout=BASE),
+    )
+    monkeypatch.setenv("GITHUB_REF", "refs/heads/main")
+    monkeypatch.setenv("GITHUB_REPOSITORY", REPOSITORY)
+    monkeypatch.delenv("RETRY_MISSING_VALIDATION_PR", raising=False)
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    monkeypatch.chdir(tmp_path)
+    controller.main()
+    return json.loads((tmp_path / "admission-results.json").read_text())["results"]
+
+
+@pytest.mark.parametrize(
+    "status", ["queued", "in_progress", "waiting", "pending", "requested"]
+)
+def test_only_attributed_nonterminal_validation_enters_typed_pending(status):
+    github = GitHubFixture()
+    github.runs[0].update(status=status, conclusion=None)
+    with pytest.raises(controller.ValidationPending) as pending:
+        controller.validation_run(github, github.plan)
+    assert pending.value.run["id"] == 71
+    github.runs[0]["workflow_id"] = 92
+    with pytest.raises(controller.Hold) as invalid:
+        controller.validation_run(github, github.plan)
+    assert not isinstance(invalid.value, controller.ValidationPending)
+
+
+@pytest.mark.parametrize(
+    "status,conclusion",
+    [
+        (None, None),
+        ([], None),
+        ({}, None),
+        ("unknown", None),
+        ("completed", None),
+        ("queued", "success"),
+    ],
+)
+def test_unknown_or_inconsistent_validation_state_is_not_waitable(status, conclusion):
+    github = GitHubFixture()
+    github.runs[0].update(status=status, conclusion=conclusion)
+    with pytest.raises(controller.Hold) as invalid:
+        controller.validation_run(github, github.plan)
+    assert not isinstance(invalid.value, controller.ValidationPending)
+
+
+@pytest.mark.parametrize("initially_visible", [False, True])
+def test_initiating_controller_observes_and_publishes_without_another_event(
+    initially_visible, monkeypatch, tmp_path, observation_clock, publication_spy
+):
+    github = GitHubFixture()
+    queued = approved_run(github.plan)
+    queued.update(status="queued", conclusion=None)
+    github.runs = [queued] if initially_visible else []
+
+    def progress():
+        if initially_visible or observation_clock.now >= 45:
+            github.runs = [approved_run(github.plan)]
+        elif observation_clock.now >= 30:
+            github.runs = [deepcopy(queued)]
+
+    observation_clock.on_sleep = progress
+    results = admission_report(monkeypatch, tmp_path, github)
+    assert results[0]["status"] == "main published"
+    assert results[0]["validation_run"] == 71
+    assert results[0]["validation_attempt"] == 1
+    assert results[0]["plan"] == github.plan
+    assert "reason" not in results[0]
+    assert publication_spy == ([github.plan], [github.plan])
+    assert len(github.comments) == (0 if initially_visible else 1)
+    assert [path for path, _ in github.dispatches] == (
+        (
+            []
+            if initially_visible
+            else ["actions/workflows/pr-validation.yml/dispatches"]
+        )
+        + ["actions/workflows/pr-controller.yml/dispatches"]
+    )
+    assert observation_clock.sleeps == [15] * (1 if initially_visible else 3)
+    assert not any("external-pr-review" in path for _, path in github.calls if path)
+
+
+@pytest.mark.parametrize("conclusion", ["failure", "cancelled", "skipped"])
+def test_terminal_failure_after_waiting_holds_without_dispatch_or_publication(
+    conclusion, monkeypatch, tmp_path, observation_clock, publication_spy
+):
+    github = GitHubFixture()
+    github.runs[0].update(status="queued", conclusion=None)
+    observation_clock.on_sleep = lambda: github.runs[0].update(
+        status="completed", conclusion=conclusion
+    )
+    result = admission_report(monkeypatch, tmp_path, github)[0]
+    assert result["status"] == "held" and conclusion in result["reason"]
+    assert result["plan"] == github.plan
+    assert result["validation_run"] == 71 and result["validation_attempt"] == 1
+    assert observation_clock.sleeps == [15]
+    assert not github.comments and not github.dispatches
+    assert publication_spy == ([], [])
+
+
+@pytest.mark.parametrize(
+    "failure",
+    ["provenance", "missing-job", "skipped-step", "missing-run", "api", "timeout"],
+)
+def test_observation_errors_are_terminal_and_retain_selected_plan(
+    failure, monkeypatch, tmp_path, observation_clock, publication_spy
+):
+    github = GitHubFixture()
+    github.runs[0].update(status="queued", conclusion=None)
+    original_api = github.api
+
+    def api(suffix="", **kwargs):
+        if observation_clock.now and suffix.startswith("actions/runs/"):
+            if failure == "api":
+                raise controller.Hold("Validation evidence unavailable")
+            if failure == "timeout":
+                raise subprocess.TimeoutExpired(["canary-private-command"], 60)
+        return original_api(suffix, **kwargs)
+
+    monkeypatch.setattr(github, "api", api)
+
+    def fail():
+        github.runs[0].update(status="completed", conclusion="success")
+        if failure == "provenance":
+            github.runs[0]["workflow_id"] = 999
+        elif failure == "missing-job":
+            github.jobs = []
+        elif failure == "skipped-step":
+            next(step for step in github.job["steps"] if step["name"] == "Test")[
+                "conclusion"
+            ] = "skipped"
+        elif failure == "missing-run":
+            github.runs = []
+
+    observation_clock.on_sleep = fail
+    result = admission_report(monkeypatch, tmp_path, github)[0]
+    assert result["status"] == "held" and result["plan"] == github.plan
+    assert result["validation_run"] == 71 and result["validation_attempt"] == 1
+    assert "canary" not in json.dumps(result)
+    assert observation_clock.sleeps == [15]
+    assert not github.comments and not github.dispatches
+    assert publication_spy == ([], [])
+
+
+def test_invisible_acknowledged_dispatch_exhausts_one_budget_without_redispatch(
+    monkeypatch, tmp_path, observation_clock, publication_spy
+):
+    github = GitHubFixture()
+    github.runs = []
+    result = admission_report(monkeypatch, tmp_path, github)[0]
+    assert result["status"] == "held" and result["observation_budget_exhausted"] is True
+    assert result["plan"] == github.plan
+    assert result["validation_observations"] == 20
+    assert observation_clock.sleeps == [15] * 20 and observation_clock.now == 300
+    assert len(github.comments) == 1
+    assert [path for path, _ in github.dispatches] == [
+        "actions/workflows/pr-validation.yml/dispatches"
+    ]
+    assert publication_spy == ([], [])
+
+
+@pytest.mark.parametrize("lost_acknowledgement", ["reservation", "dispatch"])
+def test_ambiguous_acknowledgement_never_enters_observation(
+    lost_acknowledgement, monkeypatch, tmp_path, observation_clock, publication_spy
+):
+    github = GitHubFixture()
+    github.runs = []
+    github.lose_comment_acknowledgement = lost_acknowledgement == "reservation"
+    original_api = github.api
+
+    def api(suffix="", **kwargs):
+        result = original_api(suffix, **kwargs)
+        if suffix == "actions/workflows/pr-validation.yml/dispatches":
+            raise subprocess.TimeoutExpired(["canary-private-command"], 60)
+        return result
+
+    monkeypatch.setattr(github, "api", api)
+    result = admission_report(monkeypatch, tmp_path, github)[0]
+    assert result["status"] == "held"
+    assert not observation_clock.sleeps and "canary" not in json.dumps(result)
+    assert len(github.comments) == 1
+    assert len(github.dispatches) == (lost_acknowledgement == "dispatch")
+    assert publication_spy == ([], [])
+
+
+def test_pending_plans_share_twenty_individual_probes_fairly(observation_clock):
+    github = GitHubFixture()
+    github.runs = []
+    pending = []
+    for offset in range(3):
+        plan = {**github.plan, "pr_number": str(NUMBER + offset)}
+        run = approved_run(plan, run_id=71 + offset)
+        run.update(status="queued", conclusion=None)
+        github.runs.append(run)
+        pending.append(
+            {"pr": NUMBER + offset, "status": "validation pending", "plan": plan}
+        )
+    assert list(controller.observe_validations(github, pending)) == []
+    assert [result["validation_observations"] for result in pending] == [7, 7, 6]
+    assert all(result["observation_budget_exhausted"] for result in pending)
+    observed = [
+        path
+        for method, path in github.calls
+        if method == "GET" and path.startswith("actions/runs/")
+    ]
+    assert observed == [f"actions/runs/{71 + index % 3}" for index in range(20)]
+    assert observation_clock.sleeps == [15] * 20
+    assert not github.comments and not github.dispatches
+    assert all(path.startswith("actions/") for _, path in github.calls)
+
+
+def test_scheduling_deadline_allows_only_an_inflight_request_overrun(observation_clock):
+    github = GitHubFixture()
+    github.runs[0].update(status="queued", conclusion=None)
+    github.before_run_read = lambda _: setattr(
+        observation_clock, "now", observation_clock.now + 55
+    )
+    pending = [{"pr": NUMBER, "status": "validation pending", "plan": github.plan}]
+    assert list(controller.observe_validations(github, pending)) == []
+    assert pending[0]["validation_observations"] == 5
+    assert observation_clock.sleeps == [15] * 5 and observation_clock.now == 350
+    assert pending[0]["observation_budget_exhausted"] is True
+    assert not github.dispatches
+
+
+def test_initial_scan_admits_later_qualified_pr_before_waiting_for_earlier_one(
+    monkeypatch, tmp_path, observation_clock, publication_spy
+):
+    github = GitHubFixture()
+    github.runs[0].update(status="queued", conclusion=None)
+    second = pull_request()
+    second["number"] = NUMBER + 1
+    second["head"]["sha"] = OTHER
+    second["merge_commit_sha"] = "5" * 40
+    second_plan = controller.candidate(github.repo, second, BASE, [BASE, OTHER])
+    github.runs.append(approved_run(second_plan, run_id=72))
+    original_api, original_pages, original_request = (
+        github.api,
+        github.pages,
+        github.request,
+    )
+
+    def api(suffix="", **kwargs):
+        if suffix == f"pulls/{NUMBER + 1}":
+            return deepcopy(second)
+        if suffix == f"git/commits/{second['merge_commit_sha']}":
+            return {
+                "sha": second["merge_commit_sha"],
+                "parents": [{"sha": BASE}, {"sha": OTHER}],
+            }
+        return original_api(suffix, **kwargs)
+
+    def pages(suffix, key=None):
+        if suffix.startswith("pulls?state=open"):
+            return [deepcopy(github.pr), deepcopy(second)]
+        if suffix == f"pulls/{NUMBER + 1}/reviews":
+            return []
+        if suffix == "actions/runs/72/attempts/1/jobs":
+            return [approved_job(run_id=72)]
+        return original_pages(suffix, key)
+
+    def request(path, **kwargs):
+        body = deepcopy(kwargs["body"])
+        if body["variables"]["number"] == NUMBER + 1:
+            body["variables"]["number"] = NUMBER
+        return original_request(path, **{**kwargs, "body": body})
+
+    monkeypatch.setattr(github, "api", api)
+    monkeypatch.setattr(github, "pages", pages)
+    monkeypatch.setattr(github, "request", request)
+    results = admission_report(monkeypatch, tmp_path, github)
+    assert [result["status"] for result in results] == [
+        "validation pending",
+        "main published",
+    ]
+    assert publication_spy == ([second_plan], [second_plan])
+    assert not observation_clock.sleeps
+
+
+@pytest.mark.parametrize("movement", ["head", "main", "draft", "review"])
+def test_success_observation_still_requires_fresh_candidate_and_review(
+    movement, monkeypatch, tmp_path, observation_clock, publication_spy
+):
+    github = GitHubFixture()
+    github.runs[0].update(status="queued", conclusion=None)
+
+    def move():
+        github.runs[0].update(status="completed", conclusion="success")
+        if movement == "head":
+            github.pr["head"]["sha"] = OTHER
+            github.pr["merge_commit_sha"] = "5" * 40
+            github.parents = [BASE, OTHER]
+        elif movement == "main":
+            move_main_and_synthetic_merge(github)
+        elif movement == "draft":
+            github.pr["draft"] = True
+        else:
+            github.reviews = [review(user=AUTHOR, state="CHANGES_REQUESTED")]
+
+    observation_clock.on_sleep = move
+    result = admission_report(monkeypatch, tmp_path, github)[0]
+    assert result["plan"] == github.plan
+    assert result["status"] == (
+        "new-main controller dispatched" if movement == "main" else "held"
+    )
+    assert publication_spy == ([], []) and not github.comments
+    assert [path for path, _ in github.dispatches] == (
+        ["actions/workflows/pr-controller.yml/dispatches"] if movement == "main" else []
+    )
+
+
+def test_disappearing_success_cannot_reserve_or_dispatch_again(
+    monkeypatch, tmp_path, observation_clock, publication_spy
+):
+    github = GitHubFixture()
+    github.runs[0].update(status="queued", conclusion=None)
+    observation_clock.on_sleep = lambda: github.runs[0].update(
+        status="completed", conclusion="success"
+    )
+
+    def disappear(current):
+        if current.pr_reads == 2:
+            current.runs = []
+
+    github.before_pr_read = disappear
+    result = admission_report(monkeypatch, tmp_path, github)[0]
+    assert result["status"] == "held" and "no longer visible" in result["reason"]
+    assert result["plan"] == github.plan
+    assert not github.comments and not github.dispatches
+    assert publication_spy == ([], [])
+
+
+def test_latest_attempt_is_rechecked_after_observation_before_publication(
+    monkeypatch, tmp_path, observation_clock, publication_spy
+):
+    github = GitHubFixture()
+    github.runs[0].update(status="queued", conclusion=None)
+    observation_clock.on_sleep = lambda: github.runs[0].update(
+        status="completed", conclusion="success"
+    )
+
+    def rerun(current):
+        if current.run_reads == 4:
+            current.runs[0].update(run_attempt=2, status="in_progress", conclusion=None)
+
+    github.before_run_read = rerun
+    result = admission_report(monkeypatch, tmp_path, github)[0]
+    assert result["status"] == "held" and "in_progress" in result["reason"]
+    assert publication_spy == ([github.plan], [])
+    assert not github.comments and not github.dispatches
+
+
+def test_successful_publication_survives_ambiguous_successor_dispatch(
+    monkeypatch, tmp_path, observation_clock, publication_spy
+):
+    github = GitHubFixture()
+    original_api = github.api
+
+    def api(suffix="", **kwargs):
+        result = original_api(suffix, **kwargs)
+        if suffix == "actions/workflows/pr-controller.yml/dispatches":
+            raise subprocess.TimeoutExpired(["canary-private-command"], 60)
+        return result
+
+    monkeypatch.setattr(github, "api", api)
+    result = admission_report(monkeypatch, tmp_path, github)[0]
+    assert result["status"] == "main published" and result["push_acknowledged"] is True
+    assert result["plan"] == github.plan and result["validation_run"] == 71
+    assert "acknowledgement timed out" in result["followup"]
+    assert "canary" not in json.dumps(result)
+    assert publication_spy == ([github.plan], [github.plan])
+    assert [path for path, _ in github.dispatches] == [
+        "actions/workflows/pr-controller.yml/dispatches"
+    ]
+    assert not observation_clock.sleeps
+
+
+def test_policy_restart_timeout_after_waiting_stops_old_policy_without_retry(
+    monkeypatch, tmp_path, observation_clock, publication_spy
+):
+    github = GitHubFixture()
+    github.runs[0].update(status="queued", conclusion=None)
+    original_api = github.api
+    original_observer = controller.observe_validations
+
+    def stop_after_success(github, pending):
+        for result in original_observer(github, pending):
+            yield result
+            pytest.fail(
+                "Old policy continued after an ambiguous restart acknowledgement"
+            )
+
+    def api(suffix="", **kwargs):
+        result = original_api(suffix, **kwargs)
+        if suffix == "actions/workflows/pr-controller.yml/dispatches":
+            raise subprocess.TimeoutExpired(["canary-private-command"], 60)
+        return result
+
+    def move():
+        github.runs[0].update(status="completed", conclusion="success")
+        move_main_and_synthetic_merge(github)
+
+    monkeypatch.setattr(github, "api", api)
+    monkeypatch.setattr(controller, "observe_validations", stop_after_success)
+    observation_clock.on_sleep = move
+    result = admission_report(monkeypatch, tmp_path, github)[0]
+    assert result["status"] == "current-policy restart required"
+    assert result["plan"] == github.plan and result["validation_run"] == 71
+    assert "acknowledgement timed out" in result["followup"]
+    assert "canary" not in json.dumps(result)
+    assert publication_spy == ([], []) and observation_clock.sleeps == [15]
+    assert [path for path, _ in github.dispatches] == [
+        "actions/workflows/pr-controller.yml/dispatches"
+    ]
