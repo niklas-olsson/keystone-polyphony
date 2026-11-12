@@ -166,6 +166,45 @@ interface-monitor creation with EPERM, before discovery. Its local transport
 fixtures do not establish real transport success. The enabled CI qualification
 must pass before this slice is merged.
 
+### Managed-authority outage
+
+The separate `tests/test_conversation_authority_outage.py` trial starts two real,
+independently keyed Hyperswarm peers and the actual coordinator service in a
+different process. It enrolls a synthetic managed task through authenticated
+HTTP, stops the coordinator and waits for its process to exit. Fresh same-key
+claim requests fail to connect before and after the conversation phase.
+
+During that outage both peers receive a signed proposal and causal disagreement.
+One peer reopens its own durable database and identity, authenticates again, and
+catches up on a contribution sent while it was disconnected. The coordinator
+then reopens its original database. Its scoped state must still have the exact
+original task, zero attempts and zero allocated execution budget before an
+online claim is retried. Two byte-identical online claims must return the same
+canonical attempt and runtime binding, with exactly one budget allocation.
+Conversation delivery and read state grant no canonical execution authority.
+
+    POLYPHONY_REAL_CHAT_TESTS=1 PYTHONPATH=src:. \
+      python -m pytest tests/test_conversation_authority_outage.py -v
+
+The existing Collaboration Validation workflow enables this real mode for the
+complete suite. Missing bootstrap, discovery, remote receipt or authority
+recovery fails qualification. Normal local runs execute the actual coordinator
+HTTP/process recovery check and explicitly skip the separate peer trial unless
+real mode is enabled. A skipped trial, or the local native-interface EPERM
+restriction, does not establish peer-outage qualification. The new trial must
+pass in the required CI mode before its outage acceptance criterion is claimed.
+
+This evidence covers peer conversation and canonical allocation availability.
+It makes no model calls and starts no executor. The selected disagreement is a
+transport fixture with independent cryptographic attribution, not a claim about
+live-provider reasoning. Offline requests establish non-delivery; subsequent
+online duplicates establish idempotent allocation. The trial does not cover a
+lost response after commit, an in-flight crash, validity of earlier grants,
+OpenJules launch behavior during outage, a managed-agent public chat bridge,
+multi-host transport or wire-byte measurement. Generated credentials, identities,
+databases and process logs stay in private disposable directories; the printed
+evidence contains aggregate assertions only.
+
 ## Reproducible frame and storage measurements
 
 Run:
