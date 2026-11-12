@@ -6,13 +6,27 @@ owns containers, process termination and workspace capture. Polyphony owns task
 requirements, attempt budgets, artifact identity and independent acceptance.
 Ordinary peer discussion remains independent of this service.
 
-This is the root-runtime slice of [#109](https://github.com/niklas-olsson/keystone-polyphony/issues/109)
-and [#112](https://github.com/niklas-olsson/keystone-polyphony/issues/112). The
-[bounded child grant API](child-grants.md) adds optional canonical delegation;
-actual child runtime execution, convergence of every experimental CLI/MCP entry point, automatic forge
-publication and cross-host authority failover remain separate work. Capabilities
-explicitly return `children: false`. Internal acceptance always retains
-`release_authorized: false` and is not GitHub approval or merge provenance.
+This guide describes the root-runtime handoff from
+[#109](https://github.com/niklas-olsson/keystone-polyphony/issues/109).
+The authenticated service is the managed authority. Experimental task CLI/MCP
+operations refuse reserved `task_v2_` identities, and advisory task batons also
+refuse backlog entries marked as managed. Historical experimental records remain
+inspectable; caller-supplied labels cannot authenticate managed ownership. See
+the [compatibility boundary](durable-collaboration.md).
+
+The [bounded child grant API](child-grants.md) adds optional canonical delegation
+for [#112](https://github.com/niklas-olsson/keystone-polyphony/issues/112).
+Capabilities retain `children: false`: an authority response does not prove that
+a connected runtime can execute children. Separate `child_grants`, `child_policy`
+and `child_initial_outcome` fields describe the authority's supported contracts.
+Real root and bounded child execution are demonstrated for the exact installed
+revisions in the [qualified installation record](https://github.com/niklas-olsson/zero-point-modulator/pull/28#issuecomment-6811017999).
+That evidence does not qualify an arbitrary component combination.
+
+Automatic forge publication and cross-host authority failover are separate from
+this handoff. Internal acceptance always retains `release_authorized: false`
+and is not GitHub approval or merge provenance. Remaining integrated acceptance
+is maintained in [ZPM #3](https://github.com/niklas-olsson/zero-point-modulator/issues/3).
 
 ## Single-host setup
 
