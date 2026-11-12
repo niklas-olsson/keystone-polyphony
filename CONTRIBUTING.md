@@ -18,6 +18,21 @@ Agents must also follow [AGENTS.md](AGENTS.md), including ensemble architecture
 review for significant or security-sensitive changes. Independent development
 review and truthful evidence remain useful even when a provider is unavailable.
 
+## Documentation
+
+Use the [source and documentation map](docs/architecture.md) to find the guide
+that owns the explanation. When a change affects behavior, commands,
+configuration, recovery, guarantees or evidence, update that guide in the same
+PR. Update the map when a source area or its documentation home moves.
+Internal refactoring needs no cosmetic prose update or routine "no docs"
+declaration.
+
+Prefer reusing, simplifying or removing an existing explanation before adding
+another document. Name the actor, action and observable result; retain exact
+identifiers where they matter. Keep independent contributions, dissent and the
+limits of the evidence attributable. README provides orientation, AGENTS covers
+agent collaboration, and the linked guides retain their detailed contracts.
+
 ## Review and merge
 
 Owner-authored ready PRs need current deterministic CI and resolution of actual
@@ -58,9 +73,11 @@ their own credentials and should never request a maintainer's personal token.
 
 ## Issues and conduct
 
-Update existing agreed issues when possible. Create a follow-up only for a
-necessary uncovered gap. If publication is unavailable, retain a Markdown draft
-in `.github/issue-drafts/`. Keep the legacy `.github/issues/` path empty while the
+Update existing agreed issues when possible. On a peer-authored issue, add an
+attributed comment unless its author or the user has explicitly authorized an
+issue-body edit. Preserve earlier findings and unresolved dissent. Create a
+follow-up only for a necessary uncovered gap. If publication is unavailable,
+retain a Markdown draft in `.github/issue-drafts/`. Keep the legacy `.github/issues/` path empty while the
 [historical queued workflow](docs/ci-cd.md#historical-queued-run) remains unresolved.
 Earlier drafts remain preserved in Git history. Publish reviewed findings through
 the normal issue interface when appropriate.

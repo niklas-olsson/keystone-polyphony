@@ -1,114 +1,56 @@
 # Repository Architecture
 
-This document is a map of the Keystone Polyphony repository. If you are new here, this is the fastest way to understand how everything fits together.
+This map routes contributors from a source area to the existing guide that owns
+its explanation. The files below are representative entry points, not a complete
+module inventory. Use [README](../README.md) for project orientation,
+[CONTRIBUTING](../CONTRIBUTING.md) for changes and review, and
+[AGENTS](../AGENTS.md) for agent collaboration norms.
 
-## Directory Overview
+## Source and documentation map
 
-```
-keystone-polyphony/
-├── README.md                   # Project overview and CTA
-├── CONTRIBUTING.md             # How to contribute (all contributor types)
-├── AGENTS.md                   # Contributor norms for autonomous systems
-├── CODE_OF_CONDUCT.md          # Community standards
-├── LICENSE                     # MIT License
-│
-├── docs/                       # Documentation
-│   ├── getting-started.md      # First contribution walkthrough
-│   ├── architecture.md         # This file
-│   ├── liminal-bridge.md       # Liminal Bridge architecture and operation guide
-│   ├── ci-cd.md                # CI/CD pipeline reference
-│   ├── git-hooks-architecture.md  # Hook design and interaction stories
-│   └── features/               # BDD feature specs
-│       └── git-hooks.feature   # Git hooks behavior specs
-│
-├── scripts/                    # Automation scripts
-│   ├── install-hooks.sh        # Installs local git hooks
-│   ├── run-tests.sh            # Test runner (used by pre-push hook)
-│   ├── triage-dispatch.sh      # Issue triage dispatcher
-│   └── triage-lib.sh           # Shared triage utilities
-│
-├── .github/
-│   ├── workflows/              # GitHub Actions (see CI/CD section below)
-│   ├── reviewers.yml           # Reviewer roster and quota config
-│   └── issues/                 # Agent-created issue files (temporary)
-│
-├── .githooks/                  # Local hook scripts
-│
-└── meta/
-    └── DISCOVERIES.md          # Log of agent-published issues
-```
+| Area | Representative source | Canonical explanation |
+| --- | --- | --- |
+| Runtime and client setup | [setup-ensemble.sh](../scripts/setup-ensemble.sh), [DevContainer](../.devcontainer/devcontainer.json), [polyphony](../polyphony) | [Getting Started](getting-started.md); client-specific [Zed](zed-integration.md) and [VSCode](vscode-integration.md) guides |
+| Ordinary ensemble tools and advisory planning | [server.py](../src/liminal_bridge/server.py), [pulse.py](../src/liminal_bridge/pulse.py), [architect.py](../src/liminal_bridge/architect.py) | [Liminal Bridge](liminal-bridge.md) |
+| Signed public conversation and restricted profile | [conversation.py](../src/liminal_bridge/conversation.py), [conversation_server.py](../src/liminal_bridge/conversation_server.py) | [Durable public peer conversation](conversation.md) |
+| Peer transport and notification delivery | [mesh.py](../src/liminal_bridge/mesh.py), [sidecar/bridge.js](../src/liminal_bridge/sidecar/bridge.js) | [Mixed-transport swarm delivery](swarm-delivery.md) |
+| Durable authority, worker choice and coordinator service | [authority.py](../src/core/collaboration/authority.py), [coordinator_service.py](../src/liminal_bridge/coordinator_service.py) | [Durable collaboration](durable-collaboration.md) |
+| Managed enrollment and root-runtime handoff | [managed_runtime.py](../src/core/collaboration/managed_runtime.py), [managed_service.py](../src/liminal_bridge/managed_service.py), [managed_cli.py](../src/liminal_bridge/managed_cli.py) | [Canonical managed runtime handoff](managed-runtime.md) |
+| Bounded child grants and private child routes | [child_grants.py](../src/core/collaboration/child_grants.py), [child_service.py](../src/liminal_bridge/child_service.py) | [Bounded child grants](child-grants.md) |
+| Pull requests, exact-revision validation and admission | [workflows](../.github/workflows/), [pr-controller.py](../scripts/pr-controller.py), [review-external-pr.py](../scripts/review-external-pr.py) | [CI policy and recovery](ci-cd.md) |
+| Local checks and hooks | [.githooks](../.githooks/), [install-hooks.sh](../scripts/install-hooks.sh), [lint.sh](../scripts/lint.sh), [run-tests.sh](../scripts/run-tests.sh) | [Contribution checks](../CONTRIBUTING.md#local-hooks) and [hook architecture](git-hooks-architecture.md) |
 
-## How the Pieces Connect
+Update the owning guide when its behavior or evidence changes, and update this
+map when routing changes. The [documentation rule](../CONTRIBUTING.md#documentation)
+keeps that work in the same PR without requiring prose changes for internal
+refactoring.
 
-```mermaid
-graph TD
-    subgraph Contributors
-        H[Human Contributor]
-        A[AI Agent]
-    end
+## Boundaries to keep visible
 
-    subgraph Local
-        HOOKS[Git Hooks]
-        SCRIPTS[Scripts]
-    end
+Public conversation preserves distinct authors, replies, declines and dissent.
+Reading a message does not grant managed execution authority. Independently
+invited peers remain separate from managed children; the conversation and child
+guides own those contracts.
 
-    subgraph GitHub Actions
-        AUTO[Auto-merge to Staging]
-        PERIODIC[Periodic Merge to Main]
-        ISSUES[Publish Agent Issues]
-        REVIEWER[Issue Reviewer]
-        SOLVER[CLI Agent Issue Solver]
-        LABEL[Label Contributors]
-        SWEEP[Daily Issue Close Sweep]
-    end
+The managed service owns canonical requirements, attempt budgets and artifact
+identity. ZPM owns repository capacity, and OpenJules owns container execution,
+confinement, termination and capture. A grant response alone does not demonstrate
+an executable child runtime. Follow [managed-runtime.md](managed-runtime.md) and
+[child-grants.md](child-grants.md) for the handoff and its qualification limits.
 
-    H --> HOOKS
-    A --> HOOKS
-    HOOKS --> SCRIPTS
+Keep deterministic fixtures, native transport/runtime trials, live provider
+behavior and actual forge outcomes distinct. A retained artifact or internal
+acceptance does not establish GitHub approval, publication or merge.
 
-    H -->|Opens PR| AUTO
-    A -->|Opens PR| AUTO
-    AUTO -->|Merges to staging| PERIODIC
-    PERIODIC -->|Tests pass| LABEL
+## Contributions and recovery
 
-    A -->|Creates .github/issues/*.md| ISSUES
-    ISSUES -->|Publishes to upstream| REVIEWER
-    REVIEWER -->|Assigns reviewer| SOLVER
-    SOLVER -->|Opens PR| AUTO
-    PERIODIC --> SWEEP
-```
+Use a focused branch and open a PR directly to `main`. Current admission checks
+the exact proposed merge against the current head and base. The
+[CI policy](ci-cd.md) owns contributor identity rules, required validation,
+review holds and recovery; this map does not duplicate them.
 
-## Key Docs by Audience
-
-| If you are... | Start here |
-|---|---|
-| New to the project | [`docs/getting-started.md`](getting-started.md) |
-| Working on the swarm substrate | [`docs/liminal-bridge.md`](liminal-bridge.md) |
-| Setting up agent automation | [`CONTRIBUTING.md`](../CONTRIBUTING.md) (Agentic Default Flow) |
-| An AI agent on a task | [`AGENTS.md`](../AGENTS.md) |
-| Curious about the CI/CD pipelines | [`docs/ci-cd.md`](ci-cd.md) |
-| Looking at the git hooks | [`docs/git-hooks-architecture.md`](git-hooks-architecture.md) |
-
-## Branching Strategy
-
-```mermaid
-graph LR
-    FEAT[feat/topic branch] -->|PR opened| STAGING[staging]
-    STAGING -->|Tests pass every 20 min| MAIN[main]
-    MAIN -->|Fork? Open upstream PR| UPSTREAM[upstream main]
-```
-
-- **Feature branches**: Where all work happens. Named `feat/`, `fix/`, `docs/`, `chore/`.
-- **staging**: Integration branch. PRs are auto-merged here for testing.
-- **main**: Production. Only promoted from staging after all tests pass.
-- **upstream main**: The source of truth. Fork owners open PRs here after their `main` is tested.
-
-## Issue Lifecycle
-
-Issues flow through a label-driven state machine. See [`docs/ci-cd.md`](ci-cd.md) for the full lifecycle diagram and label reference.
-
-```
-New issue -> pre-review -> reviewer assigned -> reviewed -> ready for work -> agent working -> PR opened -> merged
-```
-
-Each transition is driven by GitHub Actions workflows and governed by per-reviewer and per-agent daily quotas.
+Use the [normal issue process](../CONTRIBUTING.md#issues-and-conduct) for findings
+and attributed follow-up. Offline drafts belong in `.github/issue-drafts/`.
+Preserve the [historical queued-workflow limitation](ci-cd.md#historical-queued-run)
+when handling old automation; retired workflow diagrams are not current
+publication instructions.

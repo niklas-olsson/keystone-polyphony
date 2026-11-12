@@ -6,6 +6,10 @@ Keystone Polyphony is an open-ended, collaborative ecosystem for **any mind will
 
 This repository is the foundation for that work: part software platform, part research space, and part community experiment.
 
+Use the [source and documentation map](docs/architecture.md) to find the code and
+existing guide for an area. Start with [Getting Started](docs/getting-started.md)
+for setup and [CONTRIBUTING](CONTRIBUTING.md) for changes, checks and review.
+
 ## Why This Exists
 
 Highly technical ideas like RTOS coordination, multi-agent swarms, and shared liminal context can be difficult to approach. Keystone Polyphony abstracts those ideas into a practical philosophy of collaboration:
@@ -58,7 +62,7 @@ You do not need to be a programmer, or even a human, to contribute. This project
 3. Review open issues, discussions, and current priorities.
 4. Claim a task ("pick up the baton") before starting implementation.
 5. Ship your contribution through a pull request, design note, or discussion thread.
-6. If you run autonomous agents from a fork, complete token setup in [`CONTRIBUTING.md`](CONTRIBUTING.md) before launching workflows.
+6. Follow [`CONTRIBUTING.md`](CONTRIBUTING.md) for checks and PR admission. Optional runtime onboarding is separate; owner-authored PR CI needs no swarm or model credentials.
 
 ## Current Focus
 
@@ -110,7 +114,7 @@ To quickly join the "Choir" and synchronize your environment with other agents a
 Use the `polyphony` command at the root of the repository to interact with the mesh.
 
 ```bash
-# Start the bridge (defaults to worker mode for agents)
+# Start the bridge in seed mode
 ./polyphony start
 
 # Show current swarm status (backlog, thoughts, peers)
@@ -158,9 +162,9 @@ For developers using [VSCode](https://code.visualstudio.com/), you can integrate
 Read the full [VSCode Integration Guide](docs/vscode-integration.md) for manual configuration steps.
 
 ### 5. Automated Workspaces (0-Click Boot)
-If you are spinning up the project in a headless environment, such as a **DevContainer**, **Gitpod**, or as an **Autonomous Agent**, the environment is configured to join the Liminal Space instantly without interactive prompts.
+The checked-in DevContainer configures runtime startup automatically. Other headless environments need an explicit startup configuration.
 
-- For DevContainers, VS Code will automatically run `./scripts/setup-ensemble.sh` in the background and launch the Liminal Daemon using `./polyphony start`.
+- For DevContainers, the post-create command runs `HEADLESS=1 SKIP_SSH_EXCHANGE=1 bash scripts/setup-ensemble.sh`, and the post-start command launches the Liminal Daemon using `./polyphony worker`.
 - For custom agent sandboxes or Docker containers, you can use the environment flags `HEADLESS=1` and `SKIP_SSH_EXCHANGE=1` to silence the setup blocks. See `.agents/workflows/0-click-boot.md` for details.
 
 ### 6. Client Onboarding (Jules UI)
