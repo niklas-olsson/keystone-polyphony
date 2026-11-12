@@ -11,6 +11,7 @@ import re
 import secrets
 
 from .errors import Conflict
+from .child_outcomes import initial_outcome
 
 CHILD_POLICY_FIELDS = frozenset(
     {"max_children", "max_child_seconds", "max_child_turns", "child_capabilities"}
@@ -370,14 +371,16 @@ class ChildGrantAuthority:
         raw = content.encode()
         if len(raw) > 4_000_000:
             raise ValueError("child capture exceeds 4 MB limit")
-        if kind == "manifest" and not isinstance(json.loads(content), dict):
-            raise ValueError("child manifest must be a JSON object")
         artifact = hashlib.sha256(raw).hexdigest()
         with self.transaction() as db:
             root = self._child_root(
                 db, attempt_id, scope(deployment_id, repository), runtime_principal
             )
             child = self._child(db, root, child_id)
+            if kind == "manifest":
+                # Reject bad new input before it occupies this immutable slot.
+                # Historical evidence delivery does not require launch permission.
+                initial_outcome(content, child["binding"])
             key = digest([child_id, kind])
             prior = db.execute(
                 "SELECT body FROM records WHERE kind='child_capture' AND id=?", (key,)
@@ -406,11 +409,12 @@ class ChildGrantAuthority:
             )
 
     def _verify_child_capture(self, db, child):
-        from .authority import digest
+        from .authority import canonical, digest
 
         artifacts = child.get("captured_artifacts", {})
         if set(artifacts) != CAPTURES:
             raise Conflict("child terminal receipt requires every capture")
+        manifest = None
         for kind, artifact in artifacts.items():
             saved = self._get(db, "child_capture", digest([child["id"], kind]))
             row = db.execute(
@@ -422,6 +426,34 @@ class ChildGrantAuthority:
                 or hashlib.sha256(bytes(row[0])).hexdigest() != artifact
             ):
                 raise Conflict("child durable capture verification failed")
+            if kind == "manifest":
+                manifest = bytes(row[0])
+        try:
+            outcome = initial_outcome(manifest.decode("utf-8"), child["binding"])
+        except (ValueError, TypeError, KeyError) as exc:
+            raise Conflict("child durable outcome verification failed") from exc
+        projection = (
+            outcome
+            | {
+                "artifacts": artifacts,
+                "canonical_committed": True,
+                "release_authorized": False,
+            }
+            if outcome is not None
+            else None
+        )
+        if child["termination_confirmed"]:
+            try:
+                matches = canonical(child.get("initial_outcome")) == canonical(
+                    projection
+                ) and not (projection is None and "initial_outcome" in child)
+            except (ValueError, TypeError):
+                matches = False
+            if not matches:
+                raise Conflict(
+                    "child outcome projection does not match durable capture"
+                )
+        return projection
 
     def managed_child_observe(
         self,
@@ -481,7 +513,9 @@ class ChildGrantAuthority:
                 return child
             if termination_confirmed:
                 child["captured_artifacts"] = artifacts
-                self._verify_child_capture(db, child)
+                outcome = self._verify_child_capture(db, child)
+                if outcome is not None:
+                    child["initial_outcome"] = outcome
                 child.update(
                     termination_confirmed=True,
                     launch_fenced=True,

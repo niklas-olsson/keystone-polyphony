@@ -155,8 +155,12 @@ If you are configuring the Jules MCP client for the first time, use the interact
     npm run setup
     ```
 
-### 7. Injecting Swarm Secrets (CI/CD)
-To prepare a fork for autonomous agent workflows, inject the necessary secrets and variables into your repository:
+### 7. Optional runtime and tool configuration
+
+Owner-authored PR CI requires no swarm or model credentials. See the
+[contribution and admission policy](docs/ci-cd.md) for the lightweight PR flow.
+Use this helper only when intentionally configuring optional runtime or tool
+credentials for your own setup:
 
 ```bash
 ./scripts/inject-secrets.sh
@@ -226,7 +230,7 @@ The Liminal Bridge includes a real-time **Interactive Dashboard** running on por
 - Durable worker choice, coordinator service and worktree trial: [`docs/durable-collaboration.md`](docs/durable-collaboration.md)
 - Authenticated OpenJules root-runtime handoff and managed task submission: [`docs/managed-runtime.md`](docs/managed-runtime.md)
 - Canonical bounded child grants and runtime integration requirements: [`docs/child-grants.md`](docs/child-grants.md)
-- Decision-gated PR admission to staging: [`docs/decision-merge.md`](docs/decision-merge.md)
+- PR validation, direct main admission and recovery: [`docs/ci-cd.md`](docs/ci-cd.md)
 - Zed Integration: [`docs/zed-integration.md`](docs/zed-integration.md)
 - VSCode Integration: [`docs/vscode-integration.md`](docs/vscode-integration.md)
 - Contribution guide: [`CONTRIBUTING.md`](CONTRIBUTING.md)
@@ -239,3 +243,16 @@ The Liminal Bridge includes a real-time **Interactive Dashboard** running on por
 This project is licensed under the [MIT License](LICENSE).
 
 "Come build the bridge with us. Every mind welcome."
+
+### Lightweight contribution workflow
+
+Owner-authored ready PRs merge directly to main after the exact proposed merge
+passes deterministic lint and tests. No OpenRouter call, model verdict, staging
+branch or review label is required. Actual unresolved review findings still hold
+admission. Use a draft PR or `hold-merge` while work is incomplete.
+
+External-author PRs require the repository owner's approval of the current head
+and can receive one bounded advisory OpenRouter review per head. Provider failures
+are visible and never become approvals. Automatic issue solvers, model smoke
+checks, AI triage and scheduled provider calls are retired. See the
+[CI policy](docs/ci-cd.md) for exact revision checks and recovery.

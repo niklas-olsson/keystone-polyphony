@@ -1,290 +1,238 @@
-# Continuous Integration & Delivery (CI/CD)
+# Pull requests and direct main admission
 
-This document outlines the automated pipelines that power the development lifecycle of this project. All automation is handled via GitHub Actions and can be found in the `[.github/workflows](../.github/workflows)` directory.
+Owner-authored pull requests need deterministic CI. They do not need OpenRouter,
+review labels, a model verdict, a staging branch or a periodic promotion job.
+External-author pull requests get a bounded advisory model review and require the
+repository owner's approval of the current head before automatic admission.
 
-## Workflows Overview
+| Contributor | Required for automatic main admission | Provider use |
+| --- | --- | --- |
+| Repository owner | Ready PR, current proposed merge passes lint/full deterministic tests, no unresolved review findings | None |
+| Anyone else, including collaborators and bots | The same CI and review conditions, plus repository-owner approval on the current head | At most one advisory request per PR head |
 
-### Swarm verification
+Ownership comes from GitHub's numeric PR author ID and the personal repository
+owner ID. The triggering actor, branch name, labels, association and fork owner
+cannot grant the owner path. An owner-authored fork is supported. Missing or
+deleted head-repository metadata holds admission.
 
-On pushes outside `main`, `swarm-node.yml` starts an isolated loopback DHT and
-checks that two real Hyperswarm nodes discover each other and exchange a message.
-This verifies local coordination without depending on public bootstrap servers;
-it does not check public DHT reachability. The scheduled seed job still uses
-the configured swarm key and public network.
+## Normal flow
 
-### 1. Auto-merge PR to Staging
-**Trigger:** `pull_request_target` (opened, synchronize, reopened, ready_for_review) against `main`.
-**File:** `auto-merge-staging.yml`
+Open a focused PR to `main`, and mark it ready when it can be integrated. No
+special label is required. Keep it draft, or apply `hold-merge`, to prevent
+admission while work or discussion continues.
 
-This workflow enforces an "open-by-default" staging environment. Whenever a non-draft Pull Request is opened against the `main` branch, it is automatically merged into the `staging` branch — **unless** the PR modifies files in `.github/workflows/`, in which case it is held for review (see *Workflow File Protection*).
+**Direct Main Admission** fetches the current PR, main and proposed merge. It
+asks **PR Validation** to test the exact merge with ordered parents
+`[current main, current PR head]`. Validation runs Python 3.12, Node 22, the
+repository lint and the full deterministic pytest suite. A failed, skipped,
+cancelled, missing or pending check cannot admit a PR. An actual
+changes-requested review or unresolved review thread also holds admission.
 
-```mermaid
-graph TD
-    A[PR to main opened or updated] --> B{Is PR a Draft?}
-    B -- Yes --> End((Skip Workflow))
-    B -- No --> W{Touches .github/workflows/?}
-    W -- Yes --> R[Apply 'workflow-review' label & request review]
-    W -- No --> C[Fetch or Create staging branch]
-    C --> D[Fetch PR branch changes]
-    D --> E[Merge PR branch into staging]
-    E --> F[Push staging to remote]
-```
+The controller scans all ready PRs before waiting, so a queued validation does
+not delay a later already-qualified PR. It then observes newly acknowledged
+dispatches and positively attributed pending validations within the same
+invocation. Normal progress does not depend on another workflow-completion
+event. Existing completion, PR, main and manual signals can still reconcile work.
 
-### 1b. Workflow File Protection
-**Trigger:** `pull_request_review` (submitted) on PRs labeled `workflow-review`.
-**File:** `workflow-review.yml`
+Waiting uses one fair queue with at most 20 individual validation probes across
+all pending PRs, spaced 15 seconds apart, and one 300-second monotonic scheduling
+budget. Each probe reuses the trusted validation lookup, usually three REST reads
+for a pending run when the listing fits one page. Already-started API calls retain
+their existing 60-second timeouts and may finish after the scheduling deadline;
+the workflow's existing ten-minute job limit remains the outer bound. Observation
+never reserves work, dispatches validation or calls a provider. Failed, cancelled,
+malformed or unavailable evidence stops that plan immediately. Missing visibility
+after an acknowledged dispatch does not cause automatic redispatch.
 
-PRs that modify `.github/workflows/` files have supply-chain security implications (arbitrary code execution, secret access). These PRs are not auto-merged; instead they receive a `workflow-review` label and a comment tagging configured reviewers. When a repository collaborator approves the PR review, this workflow merges the PR into staging.
+An observed success returns through normal admission, first comparing the fresh
+candidate to the exact retained waiting plan before any side effect. A moved
+head holds that plan; a moved main requires current-policy reconciliation. The
+latest actual run, attempt, job, steps and review evidence are checked again.
 
-```mermaid
-graph TD
-    A[PR labeled 'workflow-review'] --> B[Reviewer submits approval]
-    B --> C{Reviewer is collaborator?}
-    C -- No --> D((Ignore))
-    C -- Yes --> E[Merge PR into staging]
-    E --> F[Remove 'workflow-review' label]
-```
+After qualification, the controller publishes that already-tested merge object
+to main. It checks fast-forward ancestry and uses an explicit selected-main Git
+lease. If main changes, the old candidate cannot be published, even if the new
+main would ordinarily permit a fast-forward. The next candidate needs fresh
+current-base CI. There is no conflict-preference merge or automatic force rewind.
 
-### 2. Periodic Merge to Main
-**Trigger:** `schedule` (every 10 minutes) or `workflow_dispatch`.
-**File:** `periodic-merge-main.yml`
+GitHub's PR metadata and Git refs do not share a transaction. The controller
+rechecks author, head, readiness, review state and CI before publication, and
+reads main and PR state afterward. Its report distinguishes publication of the
+tested tree from observed PR closure. If the PR head moves during publication,
+it does not report that moved PR as merged.
 
-This scheduled job acts as the gatekeeper to production (`main`). It periodically checks the `staging` branch, runs all automated tests, and if everything passes cleanly, promotes staging into `main`. It also sweeps for any leftover issue files on `main` and publishes them.
+A successful publication starts a fresh controller from new main. This both
+applies updated policy and reconciles remaining PRs without relying on another
+push event from `GITHUB_TOKEN`. No PAT or polling schedule is needed.
 
-The test job builds a Python 3.12 / Node 22 dependency image from the staged dependency manifests, then runs lint and the complete pytest suite in a container with network access disabled. Missing test tools fail the job. `HOURLY_TEST_COMMAND` and `HOURLY_TEST_IMAGE` no longer override these required checks. Promotion checks that both main and staging still match their selected snapshots before a normal merge and push; concurrent updates cause a retry on the next cycle.
+The default job credential may be refused permission to publish workflow-file
+changes. Such a refusal is reported separately from a failed test or stale-base
+lease. A maintainer can publish the qualified change with the necessary existing
+permission; the pipeline does not expand its credentials or weaken branch rules.
 
-```mermaid
-graph TD
-    A[Every 10 min or Manual Dispatch] --> B[detect-staging: Check for changes]
-    A --> S[sweep-issues: Check for leftover issue files]
-    B --> C{Are there new commits?}
-    C -- No --> Skip((Skip Workflow))
-    C -- Yes --> D[test-staging: Run tests in Docker container]
-    D --> E{Do tests pass?}
-    E -- No --> Fail((Pipeline Fails))
-    E -- Yes --> F[merge-to-main: Verify & Merge staging to main]
-    F --> G{Running on a Fork?}
-    G -- No --> End((Done))
-    G -- Yes --> H[create-upstream-pr: Open PR to upstream]
-    H --> End
-    S --> T{Issue files found?}
-    T -- No --> Skip2((No-op))
-    T -- Yes --> U[publish-swept-issues: Call agent-issues workflow]
-```
+## Where the code executes
 
-### 3. Triage and Publish Agent Issues
-**Trigger:** `push` to `staging` modifying `.github/issues/*.md`, `workflow_call`, or `workflow_dispatch`.
-**File:** `agent-issue-triage.yml`
+The privileged controller executes only trusted main code. Its entry points are
+`pull_request_target`, completed validation/review-signal workflows, main pushes
+and manual dispatch on main. A review event is received by **PR Review Signal**,
+a separate job with no checkout, no secrets and no permissions. That signal
+carries no admission authority; the controller fetches all evidence again.
 
-The workflow dispatches issue files to the ordered reviewers in `TRIAGE_AGENTS`
-and publishes fully refined files with the `ready for work` label. Configure at
-least one reviewer: an empty or whitespace-only list holds the files for a later
-run. A failed CLI reviewer or an unconfigured Architect cannot mark a file as
-refined. Async reviewers and quota-limited reviews remain queued for a later run.
-The publisher also verifies a title, human interaction story, prerequisites,
-scope, actionable criteria, and a Gherkin scenario. Successful CLI exit without
-changes does not count as refinement, and an invalid issue with a forged marker
-is also held for review.
-The previous standalone issue reviewer has been superseded by this pipeline.
+Candidate code runs in a separate read-only validation workflow on a fresh hosted
+runner. The workflow definition comes from the selected main revision, and its
+inputs and fetched merge parents are checked before running candidate code. It
+has no provider credentials, repository write token, persisted Git credentials
+or shared cache. The writer never imports candidate code or uses a candidate
+artifact as executable policy.
 
-### 5. CLI Agent Issue Solver
-**Trigger:** `issues` (labeled `ready for work`), `workflow_dispatch`.
-**File:** `agent-issue-solver.yml`
+CI evidence must match the known workflow path and ID, dispatch event, exact
+PR/head/base/merge run name, trusted workflow revision and latest actual
+`validate` job attempt. Required validation steps must have succeeded. A newer
+pending or failed run supersedes an older success. Historical model failures and
+retired review labels do not become implicit owner merge gates.
 
-This workflow attempts solutions for issues marked as `ready for work`. It checks
-`AGENT_DAILY_TASKS`, creates a fresh `feat/agent-N-RUN_ID` branch, and runs the
-agent with a prompt stored outside the checkout. A successful invocation with
-repository changes opens a PR for review. Failed invocations and empty results
-mark the issue `agent-failed` and fail the Actions job; they cannot publish a
-solution PR merely because the generated prompt changed.
+## External advisory review and spending
 
-The default OpenCode runner uses the repository **Actions secret**
-`OPENROUTER_API_KEY`, falling back to `AGENT_API_KEY` for compatibility. A local
-`.env` file is not uploaded to Actions. The default model is
-`openrouter/nvidia/nemotron-3-ultra-550b-a55b:free`; `AGENT_MODEL` can override
-it. Native providers require their matching key or the legacy `AGENT_API_KEY`;
-an OpenRouter credential is never substituted for an Anthropic/OpenAI key.
-Provider credentials are scoped to the execution step. Both issue workflows use
-`scripts/run-issue-agent.py`, which invokes `opencode run --format json` with
-stdin, verifies terminal assistant events, enforces a ten-minute timeout, and
-isolates HOME/XDG/OpenCode state per invocation. It does not retry code-writing
-model calls automatically because partial edits may already exist.
+**External PR Review** is the only Actions workflow with an OpenRouter key. It
+runs after deterministic CI for an external PR, using trusted main code and the
+immutable proposed-merge diff as data. The advisory is limited to the bounded
+GitHub compare text; API diff completeness is not independently established. It
+never checks out external code or gives the model tools or a GitHub mutation token.
 
-To retry a particular open issue after installing this workflow change:
+The reviewer reserves a bot-authored attempt marker before loading the provider
+key. A later run for that same PR head, including a new base or a manual rerun,
+does not spend again. The report retains the actual reviewed head, base and merge;
+it does not claim a new review merely because main advanced. Owner PRs are
+excluded by fresh API identity checks before credential access.
+
+The request uses one fixed free model, `recursive/flint-v1.0:free`, bounded input
+and output, a timeout, no automatic retry, no model catalog lookup and no paid
+fallback. Missing credentials, an unsupported/oversized diff, provider failure
+or an ambiguous attempt remain visible as unavailable advisory evidence. They
+never become an approval. The repository owner's explicit current-head approval
+is authoritative for external contributions. There is no second model call to
+interpret the first review.
+
+Standalone runtime decision/model tools remain available for intentional local
+use. Automatic issue solving, AI issue triage, model smoke calls and scheduled
+provider-backed swarm seeding have been removed from Actions.
+
+## Recovery
+
+Start with the **Direct Main Admission** Actions summary and its
+`admission-results.json` artifact. It records the selected revisions and a
+concrete held/dispatched/published result for each examined PR.
+
+| Situation | Action |
+| --- | --- |
+| CI failed | Fix the failure and push a new head; for an infrastructure failure, rerun the existing validation after inspecting it |
+| Main advanced or GitHub is still calculating a merge | Run Direct Main Admission on main again if no later event has reconciled it |
+| Conflict | Resolve it on the PR branch, run required local checks and push |
+| Draft or `hold-merge` | Mark ready or remove the label when integration is intended |
+| Review hold | Resolve the thread or have the reviewer update/dismiss the actual changes-requested review; after thread resolution alone, run reconciliation manually |
+| External approval missing or stale | Repository owner reviews and approves the current PR head |
+| Validation dispatch was recorded but no run appears | Inspect Actions first, then use the targeted manual retry below |
+| The shared observation budget expired while validation was pending or invisible | Inspect the recorded revisions and run/attempt; once validation finishes, run ordinary reconciliation if no later signal has done so. Timeout does not redispatch validation or the controller |
+| Test tree published but PR closure not observed | Inspect actual main and PR head; do not claim the moved PR merged |
+| GitHub refuses workflow-file publication or a branch rule | A maintainer uses the applicable existing permission after verifying the reported exact candidate and CI; no model retry is needed |
+
+Ordinary reconciliation:
 
 ```bash
-gh workflow run agent-issue-solver.yml --ref main -f issue_number=97
+gh workflow run pr-controller.yml --ref main
 ```
 
-Repeat for #98, #90 or #88 after reviewing their current scope. Explicit retries
-still respect the daily quota and refuse issues already marked `agent-working`.
-Old workflow reruns execute the old workflow revision; adding credentials alone
-cannot repair its unsupported CLI flags. Use a new dispatch on the updated
-branch. Successful publication clears the stale `agent-failed` issue label.
+A dispatch is reserved in a bot comment before the request so an ambiguous API
+reply cannot create an automatic retry loop. If no run exists, deliberately retry
+only that PR's missing dispatch:
 
-`agent-pr` records that automation created a PR; it does not certify a fix.
-Existing PRs #92, #93, #99 and #100 contain only generated prompt changes and
-must not be merged as issue solutions. New solver runs use fresh branches rather
-than force-pushing over those PRs. Parallel workers retain their shared branch;
-failed partial-progress PRs are drafts and do not claim to close the issue.
-
-```mermaid
-graph TD
-    A[Issue labeled 'ready for work' / sweep] --> B{Under daily quota?}
-    B -- No --> C[Apply 'quota-hold']
-    B -- Yes --> D[Swap labels: 'ready for work' -> 'agent-working']
-    D --> E[Checkout, create feat/agent-N branch]
-    E --> F[Compose prompt & Run CLI agent]
-    F --> G{Agent produced changes?}
-    G -- No --> H[Label 'agent-failed', post comment]
-    G -- Yes --> I[Push branch, open PR with 'agent-pr' label]
+```bash
+gh workflow run pr-controller.yml --ref main -f retry_missing_validation_pr=123
 ```
 
-### 6. Label Contributors
-**Trigger:** `pull_request` (closed).
-**File:** `add-contributors.yml`
+This does not rerun a visible failed validation or override any merge condition.
+It does not retry provider review. Manual runs from a feature branch cannot serve
+as trusted-main validation or admission evidence.
 
-A community management workflow that ensures every contributor who successfully merges code gets recognized, human or otherwise. When a PR is merged, the author automatically receives the `CONTRIBUTOR` label. Currently, accounts ending in `[bot]` are skipped; this may be revisited as agent participation grows.
+## Native runtime qualification
 
-```mermaid
-graph TD
-    A[Pull Request Closed] --> B{Is PR merged to upstream?}
-    B -- No --> C((Skip))
-    B -- Yes --> D{"Is Author a [bot]?"}
-    D -- Yes --> C
-    D -- No --> E{Does 'CONTRIBUTOR' label exist?}
-    E -- No --> F[Create 'CONTRIBUTOR' label via API]
-    F --> G[Apply label to the merged PR]
-    E -- Yes --> G
+Local required hooks, lint and tests remain required. Native transport trials,
+traffic capture and storage measurements are separate evidence from deterministic
+CI and from actual forge outcomes. **Collaboration Validation** runs its native
+suite and measurements only when explicitly requested. Ordinary PRs and feature
+branch pushes use the deterministic admission flow without this duplicate suite
+or capture benchmark.
+
+Request native qualification on main manually:
+
+```bash
+gh workflow run collaboration-validation.yml --ref main
 ```
 
-### 7. Daily Issue Close Sweep
-**Trigger:** `schedule` (daily) or `workflow_dispatch`.
-**File:** `daily-close-merged-issues.yml`
+An authorized maintainer or connector can also create a branch named
+`qualification/<purpose>-<short-sha>` pointing to the exact revision to qualify.
+Only pushes to `qualification/**` trigger this workflow automatically. Use a
+revision containing this opt-in workflow definition. For example, replace both
+uppercase placeholders before publishing the qualification branch:
 
-This workflow closes stale open issues that are already resolved by merged PRs when native GitHub auto-close did not fire. To prevent false positives, it only closes issues that appear in GitHub's own `closingIssuesReferences` for merged PRs, only for allowed base branches (`ISSUE_CLOSER_ALLOWED_BASE_REFS`, default: `main,staging`), only when the target is still an open issue in the same repository, and skips issues that were manually reopened after the PR merge.
-
-```mermaid
-graph TD
-    A[Daily Cron or Manual Dispatch] --> B[Search merged PRs in lookback window]
-    B --> C{PR base allowed?}
-    C -- No --> Skip1((Skip PR))
-    C -- Yes --> D[Read GitHub closingIssuesReferences]
-    D --> E{Referenced item is open same-repo issue?}
-    E -- No --> Skip2((Skip Item))
-    E -- Yes --> F[Close issue and add audit comment]
+```bash
+git push origin FULL_COMMIT_SHA:refs/heads/qualification/PURPOSE-SHORT_SHA
 ```
 
-### 8. Specialized AI PR Reviews (CLI)
-**Trigger:** `issue_comment`, `pull_request_review_comment`, `pull_request` (labeled), `workflow_dispatch`.
-**File:** `opencode.yml`
+Record the run URL and actual checked-out commit with its measurement artifacts.
+Creating a qualification branch does not grant approval or admit that revision
+to main. Current-head/current-base **PR Validation** remains the admission gate.
 
-This workflow provides targeted AI analysis on Pull Requests using a pluggable CLI runner. It can be triggered manually via `/oc` commands or automatically by adding labels like `workflow-review`, `arch-review`, or `security-review`. The workflow identifies changed files relevant to the review type, posts a guiding comment, runs the selected CLI directly, and posts the CLI output back to the PR.
+## Retired automation maintenance
 
-CLI selection precedence is:
-1. Default (`opencode`)
-2. Repository variable (`REVIEW_AGENT_CLI`, then fallback `AGENT_CLI`)
-3. PR label tag (`review-cli:<cli>` or `review-agent:<cli>`)
+The retired workflows are the two legacy staging writers, decision-model
+admission, periodic promotion, duplicate CLI reviewers, issue solvers/triage,
+live decision smoke and scheduled swarm seed. Their definitions are removed from
+current main, so those entry points no longer start new automatic promotion or
+provider work. Historical findings and failed review attempts remain in PR
+history; their absence of usable evidence is not rewritten as a successful review.
 
-Both review runners (`opencode.yml` and `workflow-review-dispatch.yml`) default to
-`auto`. The shared [model picker](model-picker.md) queries the current OpenRouter
-catalog, requires free text/tool models with at least 256,000 tokens of context,
-and ranks by documented total parameters, catalog release date, then context.
-Unknown parameter counts rank below disclosed sizes. This implements the
-capacity-first criterion; it is not a benchmark of review quality.
+Removing a workflow file does not cancel copies already queued or running.
+Retirement is explicit maintenance and is not invoked by normal PR admission.
+To inspect and stop remaining or restarted copies of the exact retired workflows,
+run:
 
-Provider failures try the next candidate, with bounded attempts and time.
-A substantive review FAIL does not trigger another model. Evidence and comments
-record the model that actually completed the review. Model IDs passed to OpenCode
-include its `openrouter/` provider prefix; the catalog uses raw OpenRouter IDs.
-Before the picker reaches the trusted base branch, reviews use the prior free
-Nemotron 3 Ultra bootstrap model and emit an explicit notice. PR code is never
-loaded as the privileged picker implementation.
-
-Model selection in `opencode.yml` follows
-`auto -> REVIEW_AGENT_MODEL/AGENT_MODEL -> nonempty manual model input -> review-model:<model>`.
-The manual input defaults to empty so it does not mask repository settings.
-`workflow-review-dispatch.yml` uses `REVIEW_AGENT_MODEL`, then `AGENT_MODEL`,
-then the same default; it also honors `REVIEW_AGENT_CLI` before `AGENT_CLI`.
-Explicit overrides may select a paid model, so use a `:free` model ID when
-zero-cost inference is required.
-
-For custom tooling, install and argument behavior can be customized in
-`opencode.yml` with repository variables such as `REVIEW_AGENT_INSTALL_CMD`,
-`REVIEW_AGENT_CLI_FLAGS`, `REVIEW_AGENT_MODEL_FLAG`, `REVIEW_AGENT_PROMPT_FLAG`,
-and `REVIEW_AGENT_PROMPT_MODE`.
-
-Configure the repository secret `OPENROUTER_API_KEY` for the default model.
-The dispatch runner prefers that key for `openrouter/` models, with
-`AGENT_API_KEY` as a legacy fallback; other providers continue to use
-`AGENT_API_KEY`. The router key is scoped to credential validation and agent
-execution. OpenCode is invoked as `opencode run --model <model>` with the full
-prompt and diff streamed through stdin, avoiding command-line argument limits.
-When selecting another CLI, set a model override that the selected CLI supports.
-
-Security hardening notes:
-- `/oc` and `/opencode` comment-triggered reviews only run for trusted associations (`OWNER`, `MEMBER`, `COLLABORATOR`).
-- Default CLI installs are version-pinned, with package override variables (`REVIEW_OPENCODE_NPM_PACKAGE`, `REVIEW_OPENCLAW_NPM_PACKAGE`, `REVIEW_CLAUDE_NPM_PACKAGE`).
-- Only the provider-specific API key for the selected model is injected into the CLI environment.
-
-Public repository policy (risk classification):
-- This repository does not use confidential secrets in code, repository variables, or GitHub Actions secrets.
-- Reviewers should classify generic token plumbing as **best-practice hygiene** by default.
-- Escalate to **high severity / no-go** only when there is concrete evidence of real sensitive data exposure, privilege escalation, or malicious behavior.
-
-```mermaid
-graph TD
-    A[PR Labeled / Comment / Dispatch] --> B{Is Canonical Repo?}
-    B -- No --> End((Skip))
-    B -- Yes --> C[Identify Review Type & Target Files]
-    C --> D[Resolve CLI and model from default, vars, tags]
-    D --> E[Install and run selected CLI with specialized prompt]
-    E --> F{Agent Successful?}
-    F -- No --> G[Post Failure Comment]
-    F -- Yes --> H[Remove Trigger Label & Add 'reviewed']
+```bash
+gh workflow run retired-automation.yml --ref main
 ```
 
-### 9. Decision-Gated Staging Admission
+**Retired Automation Maintenance** executes only trusted main in the canonical
+repository, with contents read and Actions write permission. Its existing bounded
+helper uses normal cancellation and verifies completion. It retains
+`retired-automation.json`, including observed conclusions and any incomplete
+inventory. An unconfirmed result fails that maintenance run for inspection and
+manual retry; it is never reported as successful cleanup. The maintenance job
+cannot publish repository content and does not call a provider.
 
-The optional `decision-merge` label requests full review and PR validation, then
-requires an explicit automatic-review PASS with zero blocking findings, then
-a separate typed Decisions API assessment across five review areas. At least four
-areas must reach 80% YES probability, including correctness and security; an
-identified unresolved blocker vetoes admission. The local rule admits the exact
-reviewed commit to staging. The legacy staging paths defer opted-in PRs to this
-gate. Existing tested promotion to main remains unchanged. Manual runs default
-to dry-run; automatic runs apply accepted decisions. See
-[`decision-merge.md`](decision-merge.md) for configuration, provenance checks,
-retry behavior, and bootstrap requirements.
+### Historical queued run
 
----
+At the November 11, 2026 UTC installation checkpoint,
+[maintenance run 43119385184](https://github.com/niklas-olsson/keystone-polyphony/actions/runs/43119385184)
+observed seed run `43118087829` already completed successfully, without a
+cancellation request. Historical periodic run
+[42527277309](https://github.com/niklas-olsson/keystone-polyphony/actions/runs/42527277309)
+remained queued with no jobs after ordinary cancellation and one force-cancel
+attempt both returned HTTP 409. It is unresolved, not reported as cancelled.
+These observations match GitHub's documented
+[abnormal workflow-run condition](https://docs.github.com/en/actions/how-tos/troubleshoot-workflows),
+which may require GitHub Support to clear. Retain the failed maintenance evidence;
+normal owner admission does not depend on indefinite repair of this platform state.
 
-## Issue Lifecycle
+At that checkpoint, main was
+`8868577f0ebf673845c6e561f6f99e44f0b6c737` and staging was
+`bc38767a320b9e3c6fd2f54d19bf9d0fd64d3ec1`. Staging was an ancestor with zero
+commits ahead of main. The old periodic workflow fetches live refs and skips
+promotion under that condition. Current main also contained no `.github/issues/`
+files, so its separate issue sweep would not invoke the old provider-backed
+triage. Use `.github/issue-drafts/` for future unpublished drafts and leave the
+legacy watched path empty; no existing draft files were moved or deleted.
 
-All agent-generated issues follow a label-driven state machine. Labels are created automatically by workflows if they do not already exist. Issue throughput is governed by repository variables (rolling 24h window), with variable names defined per-reviewer in `.github/reviewers.yml`, and the `AGENT_DAILY_TASKS` variable for implementing agents.
-
-```mermaid
-stateDiagram-v2
-    [*] --> pre_review : Agent creates issue
-    pre_review --> reviewer_assigned : Under quota — reviewer assigns
-    pre_review --> quota_hold : Over quota — held for retry
-    quota_hold --> reviewer_assigned : Periodic sweep retries
-    reviewer_assigned --> reviewed : Reviewer completes review
-    reviewed --> ready_for_work : Final approval
-    ready_for_work --> agent_working : Under quota — agent assigned
-    ready_for_work --> quota_hold : Over quota — held for retry
-    quota_hold --> agent_working : Periodic sweep retries
-    agent_working --> agent_failed : Agent failed
-    agent_working --> agent_pr : Agent opened PR
-    agent_pr --> reviewed : Review triggers status update
-    reviewed --> [*] : PR merged
-
-    pre_review : 🟡 pre-review
-    quota_hold : ⏳ quota-hold
-    reviewer_assigned : 🟣 [reviewer label]
-    reviewed : 🟢 reviewed
-    ready_for_work : 🔵 ready for work
-    agent_working : 🔵 agent-working
-    agent_failed : 🔴 agent-failed
-    agent_pr : 🟣 agent-pr (Label on PR)
-```
+This is a recorded input/state boundary, not proof that the historical run can
+never resume. Deliberately advancing staging or repopulating its watched issue
+path could change its behavior. Keep the orphan visible as a maintenance/support
+limitation without treating failed cancellation as completed cleanup.

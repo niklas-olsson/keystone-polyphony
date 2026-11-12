@@ -1,0 +1,78 @@
+name: External PR Review
+run-name: 'External PR Review #${{ inputs.pr_number }} head=${{ inputs.head_sha }} base=${{ inputs.base_sha }} merge=${{ inputs.merge_sha }}'
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        required: true
+        type: string
+      head_sha:
+        required: true
+        type: string
+      base_sha:
+        required: true
+        type: string
+      merge_sha:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: external-pr-review-${{ inputs.pr_number }}
+  cancel-in-progress: false
+  queue: max
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  review:
+    if: >-
+      github.repository == 'niklas-olsson/keystone-polyphony' &&
+      github.ref == 'refs/heads/main' &&
+      github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      REVIEW_PR: ${{ inputs.pr_number }}
+      REVIEW_HEAD: ${{ inputs.head_sha }}
+      REVIEW_BASE: ${{ inputs.base_sha }}
+      REVIEW_MERGE: ${{ inputs.merge_sha }}
+    steps:
+      - name: Checkout trusted workflow revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify external author before provider credential access
+        id: eligibility
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          python3 scripts/review-external-pr.py --check \
+            --pr "$REVIEW_PR" --head "$REVIEW_HEAD" \
+            --base "$REVIEW_BASE" --merge "$REVIEW_MERGE"
+      - name: Produce one external advisory
+        if: steps.eligibility.outputs.eligible == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: |
+          set -euo pipefail
+          python3 scripts/review-external-pr.py \
+            --pr "$REVIEW_PR" --head "$REVIEW_HEAD" \
+            --base "$REVIEW_BASE" --merge "$REVIEW_MERGE"
+      - name: Preserve advisory outcome
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: external-pr-review-${{ github.run_id }}-${{ github.run_attempt }}
+          path: external-pr-review.json
+          if-no-files-found: warn
+          retention-days: 14

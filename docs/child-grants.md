@@ -168,6 +168,109 @@ This is provenance, not a claim that every child patch was applied successfully.
 The runtime must compose and test the actual root work product, and independent
 review remains mandatory. No child receipt grants repository merge authority.
 
+## Initial child semantic outcome
+
+The capability response advertises `child_initial_outcome: 1`. This means the
+authority validates an optional initial-instruction report in the existing final
+child manifest. It does not enable a child runtime or change the approved profile
+representation/digest. An OpenJules runner that explicitly enables this protocol
+must check the capability before claiming readiness. Existing command profiles,
+grants and manifests remain valid without it.
+
+The original grant is the durable instruction intent. A logical work turn is
+distinct from `/managed/children/turn`, which still reserves an inference request.
+This first outcome is only for the original instruction and has ordinal one:
+
+```text
+work_turn_id = digest(["polyphony-child-work-v1", child_id, grant_digest, 1])
+```
+
+`digest` is SHA-256 of UTF-8 JSON with sorted keys, separators `,` and `:`, default
+ASCII escaping, and no non-finite numbers. The
+[interoperability vector](../tests/fixtures/child-initial-outcome-v1.json) includes
+a Unicode summary and frozen digest values. It is a deterministic protocol
+fixture, not a runtime receipt.
+
+The final JSON child manifest can contain a `work_outcome` object with exactly
+these fields:
+
+```text
+schema_version: 1
+work_turn_id: derived SHA-256
+ordinal: 1
+child_id, root_attempt_id, parent_attempt_id, task_id
+requirements_revision, grant_digest, instructions_digest
+source: "child_report_via_bound_runtime" | "unreported"
+report: null | {
+  request_key, payload_digest,
+  outcome: "completed" | "declined" | "needs_clarification" | "failed",
+  summary
+}
+```
+
+Version, ordinal and requirements revision are actual JSON integers; booleans and
+floating-point aliases fail. All binding fields must equal the **original child
+grant**, including its instruction digest and original requirements revision.
+The report key matches `[A-Za-z0-9][A-Za-z0-9._:-]{0,127}`. The summary is UTF-8,
+at most 8,192 bytes, without NUL; empty text is permitted. The payload digest
+covers exactly `{request_key, outcome, summary}`. Unknown fields and ambiguous
+duplicate JSON fields in a manifest containing this extension fail.
+
+An absent extension means the legacy outcome protocol is unsupported; it is not
+upgraded or projected into a new receipt. An enabled runtime with no retained
+callback supplies `report: null` and `source: "unreported"`. A non-null report
+requires `source: "child_report_via_bound_runtime"`. A present null or malformed
+`work_outcome` is invalid, not a request to fall back to legacy behavior.
+
+The child chooses its semantic outcome. `completed` is a child self-report,
+separate from test results, composition, termination, independent review, task
+acceptance and publication. A decline or clarification does not discard partial
+work. An exit code, stdout message or empty patch cannot manufacture a report.
+
+### Commitment and recovery
+
+The runtime authenticates the callback through the child's bound UID/socket,
+derives its grant fields and retains one immutable report before acknowledging
+it locally. It must serialize that retention against final manifest freezing:
+after freeze, only an exact already-retained retry can succeed. Listener closure
+alone does not fence an in-flight callback. This runtime behavior belongs to
+OpenJules and needs its own qualification.
+
+The existing `/managed/children/capture` route validates a present extension
+**before** it can occupy the immutable manifest slot. Bad new input can therefore
+be corrected without poisoning that slot. Once committed, changed bytes conflict,
+including a changed report under a new request key. The service revalidates the
+stored extension and capture hashes at terminal observation and when the root
+consumes the child lineage. Corrupt or invalid historical evidence fails closed
+and remains retained; the service does not rewrite it.
+
+Only after verified terminal capture does the child record acquire
+`initial_outcome`. It contains the validated extension plus:
+
+```text
+artifacts: {patch: final_hash, log: final_hash, manifest: final_hash}
+canonical_committed: true
+release_authorized: false
+```
+
+The projection and terminal child update commit in the same transaction.
+Identical upload/observation retries recover the same bytes and record, without
+allocating execution, reserving inference or refunding time. A runtime may expose
+a locally retained report earlier only as provisional and not canonically
+committed. The authority does not treat that early view as a terminal receipt.
+
+Historical evidence delivery and authorized reads remain possible after expiry,
+revocation, requirements revision or profile removal. They validate the original
+binding and cannot restore permission for new effects. The existing bounded
+single-child and protected artifact reads recover the outcome; a hash alone is
+not access. Broad snapshots and public conversation omit the protected summary.
+The root/candidate lineage retains only its existing final manifest reference.
+
+This final-only outcome does not provide a second live instruction, parent agent
+process replay, a general inbox, or an automatic public chat bridge. Two-round
+managed conversation requires a separately approved persistent session and
+intermediate receipt contract under the same grant, deadlines and shared limits.
+
 ## Verification boundary
 
 The child suite covers independent SQLite connections racing against count and
@@ -179,3 +282,9 @@ managed root behavior and old profile digests remain covered.
 These are authority and HTTP tests. Actual guest UID/socket isolation, subprocess
 supervision, shared model allowances and end-to-end child execution require the
 OpenJules integration gate before child runtime readiness can be advertised.
+
+`tests/test_child_outcomes.py` additionally covers the schema and shared digest
+vector, pre-insertion rejection, competing capture writers, restart/retry,
+historical delivery, durable corruption, root/candidate barriers and actual HTTP
+read scope. It does not establish a real child callback, Docker confinement,
+live model behavior, installed three-service interoperability or forge approval.

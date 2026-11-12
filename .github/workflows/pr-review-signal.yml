@@ -1,0 +1,16 @@
+name: PR Review Signal
+
+on:
+  pull_request_review:
+    types: [submitted, dismissed]
+
+# This event can use candidate workflow code. It conveys no authority: the
+# default-branch workflow_run consumer fetches all review metadata afresh.
+permissions: {}
+
+jobs:
+  notify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 1
+    steps:
+      - run: 'true'

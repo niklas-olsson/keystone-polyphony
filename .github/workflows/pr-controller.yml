@@ -1,0 +1,52 @@
+name: Direct Main Admission
+
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
+  workflow_run:
+    workflows: ['PR Validation', 'PR Validation #* head=* base=* merge=*', 'PR Review Signal']
+    types: [completed]
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      retry_missing_validation_pr:
+        description: Retry a recorded dispatch with no visible run, for this PR only
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  actions: write
+  pull-requests: write
+
+concurrency:
+  group: direct-main-admission
+  queue: max
+
+jobs:
+  reconcile:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out trusted main only
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Reconcile ready PRs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RETRY_MISSING_VALIDATION_PR: ${{ github.event_name == 'workflow_dispatch' && inputs.retry_missing_validation_pr || '' }}
+        run: python3 scripts/pr-controller.py
+      - name: Retain admission outcomes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: admission-${{ github.run_id }}-${{ github.run_attempt }}
+          path: admission-results.json
+          if-no-files-found: warn
+          retention-days: 14

@@ -1,3 +1,5 @@
+> This document describes standalone/runtime model selection. GitHub Actions no longer use the automatic picker or CLI review chain. The external advisory review has one fixed free model and no retry; see [CI policy](ci-cd.md).
+
 # Free model selection and fallback
 
 Reviews and typed decisions default to `auto`. The shared picker reads

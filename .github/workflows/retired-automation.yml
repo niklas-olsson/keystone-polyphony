@@ -1,0 +1,39 @@
+name: Retired Automation Maintenance
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: retired-automation-maintenance
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  retire:
+    if: >-
+      github.repository == 'niklas-olsson/keystone-polyphony' &&
+      github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out trusted main only
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Retire legacy automation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/retire-automation.py
+      - name: Retain retirement outcome
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: retired-automation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: retired-automation.json
+          if-no-files-found: warn
+          retention-days: 14
