@@ -118,22 +118,34 @@ def test_task_cli_workflow(temp_db):
     rev_data = json.loads(res_rev.stdout)
     assert rev_data["success"] is True
 
-    # 5. Evidence
+    # 5. Local inspection preserves identity without asserting forge provenance.
     cmd_ev = [
         sys.executable,
         "scripts/task.py",
         "--db",
         temp_db,
-        "evidence",
+        "local-receipt",
         "--task-id",
         "t_cli_1",
-        "--pr",
-        "42",
     ]
     res_ev = subprocess.run(
         cmd_ev, check=True, stdout=subprocess.PIPE, text=True, env=env
     )
     ev_data = json.loads(res_ev.stdout)
-    assert ev_data["schema_version"] == 2
-    assert ev_data["verdict"] == "PASS"
-    assert ev_data["pr_number"] == 42
+    assert ev_data["receipt_type"] == "polyphony-experimental-local"
+    assert ev_data["candidate_id"] == candidate_id
+    assert ev_data["release_authorized"] is False
+    assert ev_data["managed_authority"] is False
+    assert "pr_number" not in ev_data
+    assert "head_sha" not in ev_data
+
+    alias = list(cmd_ev)
+    alias[4] = "evidence"
+    legacy = subprocess.run(alias, check=True, capture_output=True, text=True, env=env)
+    assert json.loads(legacy.stdout) == ev_data
+    assert "experimental local receipt only" in legacy.stderr
+    rejected = subprocess.run(
+        alias + ["--pr", "42"], capture_output=True, text=True, env=env
+    )
+    assert rejected.returncode == 1
+    assert "cannot certify GitHub" in json.loads(rejected.stdout)["error"]
