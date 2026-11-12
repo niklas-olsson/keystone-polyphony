@@ -1,7 +1,7 @@
 try:
-    from .coordinator import managed_task
+    from src.core.collaboration.experimental_boundary import ManagedTaskRefusal
 except ImportError:
-    from coordinator import managed_task
+    from core.collaboration.experimental_boundary import ManagedTaskRefusal
 
 import os
 import uuid
@@ -257,7 +257,7 @@ class DashboardServer:
             return web.json_response({"error": str(e)}, status=500)
 
     async def handle_batons(self, request):
-        return web.json_response(self.mesh.batons)
+        return web.json_response(self.mesh.advisory_batons())
 
     async def handle_post_baton(self, request):
         try:
@@ -271,14 +271,18 @@ class DashboardServer:
                 )
 
             if action == "acquire":
+                self.mesh.require_advisory_resource(resource)
                 success = await self.mesh.acquire_baton(resource)
                 return web.json_response({"success": success})
             elif action == "release":
+                self.mesh.require_advisory_resource(resource)
                 await self.mesh.release_baton(resource)
                 return web.json_response({"status": "released"})
             else:
                 return web.json_response({"error": "Invalid action"}, status=400)
 
+        except ManagedTaskRefusal as error:
+            return web.json_response({"error": str(error)}, status=409)
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
 
@@ -323,6 +327,7 @@ class DashboardServer:
                 if not task_id:
                     return web.json_response({"error": "Missing task_id"}, status=400)
 
+                self.mesh.require_advisory_resource(f"task:{task_id}")
                 success = await self.mesh.acquire_baton(f"task:{task_id}")
                 if success:
                     backlog = self.mesh.get_kv("swarm_backlog") or []
@@ -330,12 +335,16 @@ class DashboardServer:
                         try:
                             t = json.loads(item)
                             if t.get("id") == task_id:
+                                self.mesh.require_advisory_resource(f"task:{task_id}")
                                 t["owner"] = self.mesh.node_id
                                 t["status"] = "in_progress"
                                 await self.mesh.update_set(
                                     "swarm_backlog", json.dumps(t)
                                 )
+                                self.mesh.require_advisory_resource(f"task:{task_id}")
                                 break
+                        except ManagedTaskRefusal:
+                            raise
                         except BaseException:
                             continue
                     return web.json_response({"status": "claimed"})
@@ -349,30 +358,20 @@ class DashboardServer:
                     return web.json_response({"error": "Missing task_id"}, status=400)
 
                 backlog = self.mesh.get_kv("swarm_backlog") or []
-                if managed_task({"id": task_id}):
-                    return web.json_response(
-                        {"error": "Coordinator candidate acceptance required"},
-                        status=409,
-                    )
-                for item in backlog:
-                    try:
-                        task = json.loads(item)
-                    except (ValueError, TypeError):
-                        continue
-                    if task.get("id") == task_id and managed_task(task):
-                        return web.json_response(
-                            {"error": "Coordinator candidate acceptance required"},
-                            status=409,
-                        )
+                self.mesh.require_advisory_resource(f"task:{task_id}")
                 await self.mesh.release_baton(f"task:{task_id}")
                 for item in backlog:
                     try:
                         t = json.loads(item)
                         if t.get("id") == task_id:
+                            self.mesh.require_advisory_resource(f"task:{task_id}")
                             t["status"] = "done"
                             t["owner"] = self.mesh.node_id
                             await self.mesh.update_set("swarm_backlog", json.dumps(t))
+                            self.mesh.require_advisory_resource(f"task:{task_id}")
                             break
+                    except ManagedTaskRefusal:
+                        raise
                     except BaseException:
                         continue
                 return web.json_response({"status": "completed"})
@@ -380,6 +379,8 @@ class DashboardServer:
             else:
                 return web.json_response({"error": "Invalid action"}, status=400)
 
+        except ManagedTaskRefusal as error:
+            return web.json_response({"error": str(error)}, status=409)
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
 

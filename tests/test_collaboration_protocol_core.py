@@ -59,7 +59,7 @@ def test_sqlite_wal_mode_and_tables(temp_db, ledger):
 def test_atomic_assignment_and_fencing(coordinator, ledger):
     """Verify monotonic fencing tokens and atomic assignment."""
     task = coordinator.register_task(
-        task_id="task_v2_1",
+        task_id="experimental_1",
         title="Test Task",
         description="Task desc",
         baseline_sha="abc1234",
@@ -72,7 +72,7 @@ def test_atomic_assignment_and_fencing(coordinator, ledger):
 
     # Worker A acquires assignment
     ok, handle_a, msg = coordinator.dispatch_attempt(
-        task_id="task_v2_1",
+        task_id="experimental_1",
         actor_id="worker_a",
         reserve_cost=10.0,
         lease_duration=100.0,
@@ -82,14 +82,14 @@ def test_atomic_assignment_and_fencing(coordinator, ledger):
     assert handle_a.fence_token == 1
     assert handle_a.actor_id == "worker_a"
 
-    task_after = ledger.get_task("task_v2_1")
+    task_after = ledger.get_task("experimental_1")
     assert task_after.current_fence_token == 1
     assert task_after.envelope.in_flight_reserved_budget == 10.0
     assert task_after.envelope.settled_budget == 0.0
 
     # Worker B tries to acquire while A's lease is still active -> Contested baton (409 Conflict)
     ok_b, handle_b, msg_b = coordinator.dispatch_attempt(
-        task_id="task_v2_1",
+        task_id="experimental_1",
         actor_id="worker_b",
         reserve_cost=10.0,
         lease_duration=100.0,
@@ -103,7 +103,7 @@ def test_atomic_assignment_and_fencing(coordinator, ledger):
 def test_expired_lease_reassignment_and_superseded_submission(coordinator, ledger):
     """When a worker lease expires, a replacement receives a higher fence, and late worker is rejected."""
     coordinator.register_task(
-        task_id="task_v2_2",
+        task_id="experimental_2",
         title="Expiring Task",
         description="Desc",
         baseline_sha="base_sha",
@@ -112,7 +112,7 @@ def test_expired_lease_reassignment_and_superseded_submission(coordinator, ledge
 
     # Worker A acquires at t=1000 with lease duration 50s (expires t=1050)
     ok_a, handle_a, _ = coordinator.dispatch_attempt(
-        task_id="task_v2_2",
+        task_id="experimental_2",
         actor_id="worker_a",
         reserve_cost=10.0,
         lease_duration=50.0,
@@ -123,7 +123,7 @@ def test_expired_lease_reassignment_and_superseded_submission(coordinator, ledge
 
     # At t=1060, lease has expired. Worker B acquires reassignment -> Fence 2
     ok_b, handle_b, _ = coordinator.dispatch_attempt(
-        task_id="task_v2_2",
+        task_id="experimental_2",
         actor_id="worker_b",
         reserve_cost=10.0,
         lease_duration=50.0,
@@ -134,7 +134,7 @@ def test_expired_lease_reassignment_and_superseded_submission(coordinator, ledge
 
     # Worker A now returns late with fence 1 -> Must be rejected atomically
     ok_sub_a, sub_a, reason_a = coordinator.submit_attempt(
-        task_id="task_v2_2",
+        task_id="experimental_2",
         assignment_id=handle_a.attempt_id,
         actor_id="worker_a",
         fence_token=1,
@@ -149,7 +149,7 @@ def test_expired_lease_reassignment_and_superseded_submission(coordinator, ledge
 
     # Worker B submits with fence 2 -> Accepted
     ok_sub_b, sub_b, reason_b = coordinator.submit_attempt(
-        task_id="task_v2_2",
+        task_id="experimental_2",
         assignment_id=handle_b.attempt_id,
         actor_id="worker_b",
         fence_token=2,
@@ -163,7 +163,7 @@ def test_expired_lease_reassignment_and_superseded_submission(coordinator, ledge
     assert sub_b.actual_cost == 7.5
 
     # Check budget settled properly (reserved released, actual cost accounted)
-    task = ledger.get_task("task_v2_2")
+    task = ledger.get_task("experimental_2")
     # Worker A reserved 10.0 (still reserved since A never cleanly settled or was superseded on submit)
     # Worker B reserved 10.0 and settled 7.5 -> in_flight for B is 0.0, settled is 7.5
     assert task.envelope.settled_budget == 7.5
@@ -172,7 +172,7 @@ def test_expired_lease_reassignment_and_superseded_submission(coordinator, ledge
 def test_idempotent_submission_retry(coordinator, ledger):
     """An identical retry returns the same receipt; conflicting payload with reused request_id is rejected."""
     coordinator.register_task(
-        task_id="task_v2_3",
+        task_id="experimental_3",
         title="Retry Task",
         description="Desc",
         baseline_sha="base_3",
@@ -180,7 +180,7 @@ def test_idempotent_submission_retry(coordinator, ledger):
     )
 
     ok, handle, _ = coordinator.dispatch_attempt(
-        task_id="task_v2_3",
+        task_id="experimental_3",
         actor_id="worker_c",
         reserve_cost=10.0,
         lease_duration=100.0,
@@ -189,7 +189,7 @@ def test_idempotent_submission_retry(coordinator, ledger):
 
     # First submission
     ok_sub1, sub1, msg1 = coordinator.submit_attempt(
-        task_id="task_v2_3",
+        task_id="experimental_3",
         assignment_id=handle.attempt_id,
         actor_id="worker_c",
         fence_token=1,
@@ -203,7 +203,7 @@ def test_idempotent_submission_retry(coordinator, ledger):
 
     # Lost response: Identical retry
     ok_retry, sub_retry, msg_retry = coordinator.submit_attempt(
-        task_id="task_v2_3",
+        task_id="experimental_3",
         assignment_id=handle.attempt_id,
         actor_id="worker_c",
         fence_token=1,
@@ -218,7 +218,7 @@ def test_idempotent_submission_retry(coordinator, ledger):
 
     # Malicious or conflicting retry with reused request_id but different diff
     ok_bad, sub_bad, msg_bad = coordinator.submit_attempt(
-        task_id="task_v2_3",
+        task_id="experimental_3",
         assignment_id=handle.attempt_id,
         actor_id="worker_c",
         fence_token=1,
@@ -235,7 +235,7 @@ def test_idempotent_submission_retry(coordinator, ledger):
 def test_budget_exhaustion_blocks_dispatch(coordinator, ledger):
     """Verify that exceeding task envelope max_budget or max_attempts rejects new assignments."""
     coordinator.register_task(
-        task_id="task_v2_budget",
+        task_id="experimental_budget",
         title="Budget Limited Task",
         description="Desc",
         baseline_sha="base_budget",
@@ -246,13 +246,13 @@ def test_budget_exhaustion_blocks_dispatch(coordinator, ledger):
 
     # Attempt 1: reserve 15.0
     ok1, h1, _ = coordinator.dispatch_attempt(
-        task_id="task_v2_budget", actor_id="w1", reserve_cost=15.0, now=100.0
+        task_id="experimental_budget", actor_id="w1", reserve_cost=15.0, now=100.0
     )
     assert ok1 is True
 
     # Settle attempt 1 with cost 12.0
     coordinator.submit_attempt(
-        task_id="task_v2_budget",
+        task_id="experimental_budget",
         assignment_id=h1.attempt_id,
         actor_id="w1",
         fence_token=1,
@@ -264,18 +264,18 @@ def test_budget_exhaustion_blocks_dispatch(coordinator, ledger):
 
     # Attempt 2: reserve 10.0 (12.0 settled + 10.0 reserved = 22.0 <= 25.0) -> OK
     ok2, h2, _ = coordinator.dispatch_attempt(
-        task_id="task_v2_budget", actor_id="w2", reserve_cost=10.0, now=120.0
+        task_id="experimental_budget", actor_id="w2", reserve_cost=10.0, now=120.0
     )
     assert ok2 is True
 
     # Cancel attempt 2
     coordinator.cancel_attempt(
-        task_id="task_v2_budget", assignment_id=h2.attempt_id, now=125.0
+        task_id="experimental_budget", assignment_id=h2.attempt_id, now=125.0
     )
 
     # Attempt 3: max_attempts is 2 -> attempt count is now 2 -> Attempt 3 rejected
     ok3, h3, msg3 = coordinator.dispatch_attempt(
-        task_id="task_v2_budget", actor_id="w3", reserve_cost=5.0, now=130.0
+        task_id="experimental_budget", actor_id="w3", reserve_cost=5.0, now=130.0
     )
     assert ok3 is False
     assert "Max attempt count reached" in msg3

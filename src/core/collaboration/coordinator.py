@@ -13,6 +13,7 @@ from .models import (
 )
 from .ledger import FencedLedger
 from .adapter import BaseExecutionAdapter, AttemptHandle, AttemptLimits
+from .experimental_boundary import MANAGED_TASK_REFUSAL, reserved_task_id
 
 
 class CollaborationCoordinator:
@@ -112,6 +113,12 @@ class CollaborationCoordinator:
     ) -> Tuple[bool, bool, str]:
         """Returns (cancel_acknowledged, termination_confirmed, message)."""
         handle = self.active_handles.get(assignment_id)
+        if reserved_task_id(task_id) or (
+            handle is not None and reserved_task_id(handle.task_id)
+        ):
+            return False, False, MANAGED_TASK_REFUSAL
+        if handle is not None and handle.task_id != task_id:
+            return False, False, "Attempt handle belongs to another experimental task"
         termination_confirmed = False
         settled_cost = 0.0
 

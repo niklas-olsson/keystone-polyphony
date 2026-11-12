@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CLI utility for managing emergent Conductor leases and Host Signal Outbox."""
+"""Experimental conductor utilities and historical host-signal inspection."""
 
 import sys
 import os
@@ -134,7 +134,7 @@ def handle_prune(args):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Manage Emergent Conductor Leases & Gated Host Signal Outbox."
+        description="Experimental local conductor and host-signal history; never managed authority."
     )
     parser.add_argument(
         "--db", type=str, default=None, help="Path to collaboration SQLite ledger"
@@ -176,7 +176,10 @@ def main():
     p_emit.add_argument("--rationale", default="")
     p_emit.set_defaults(func=handle_emit)
 
-    p_poll = subparsers.add_parser("poll-signals", help="Poll host signals")
+    p_poll = subparsers.add_parser(
+        "poll-signals",
+        help="Inspect historical experimental signals, not executable authority",
+    )
     p_poll.add_argument(
         "--status",
         choices=["PENDING", "ACKNOWLEDGED", "FULFILLED", "REJECTED"],

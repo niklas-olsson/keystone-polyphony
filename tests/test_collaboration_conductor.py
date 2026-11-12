@@ -111,6 +111,7 @@ async def test_legacy_complete_task_guardrail_for_enrolled_tasks(temp_db, monkey
     # Mesh mock for complete_task
     mock_mesh = AsyncMock()
     mock_mesh.running = True
+    mock_mesh.require_advisory_resource = lambda resource: None
     mock_mesh.release_baton = AsyncMock()
     mock_mesh.get_kv = lambda k: []
     mock_mesh.update_set = AsyncMock()

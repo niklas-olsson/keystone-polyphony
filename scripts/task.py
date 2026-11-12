@@ -18,6 +18,10 @@ from src.core.collaboration.coordinator import CollaborationCoordinator
 from src.core.collaboration.conductor import EnsembleConductor
 from src.core.collaboration.admission import ExperimentalReceiptExporter
 from src.core.collaboration.models import ReviewVerdict, TaskStatus
+from src.core.collaboration.experimental_boundary import (
+    ManagedTaskRefusal,
+    require_experimental_task,
+)
 
 
 def get_coordinator(db_path: str = None) -> CollaborationCoordinator:
@@ -39,9 +43,24 @@ def get_receipts(db_path: str = None) -> ExperimentalReceiptExporter:
     return ExperimentalReceiptExporter(ledger)
 
 
+def print_experimental(result):
+    print(
+        json.dumps(
+            {
+                **result,
+                "managed_authority": False,
+                "release_authorized": False,
+                "identity_source": "caller-supplied",
+            },
+            indent=2,
+        )
+    )
+
+
 def handle_enroll(args):
+    require_experimental_task(args.task_id)
     coord = get_coordinator(args.db)
-    task_id = args.task_id or f"task_v2_{uuid.uuid4().hex[:8]}"
+    task_id = args.task_id or f"experimental_{uuid.uuid4().hex[:8]}"
     criteria = [c.strip() for c in args.criteria.split(",") if c.strip()]
     task = coord.register_task(
         task_id=task_id,
@@ -52,10 +71,11 @@ def handle_enroll(args):
         max_budget=args.budget,
         max_attempts=args.max_attempts,
     )
-    print(json.dumps(task.to_dict(), indent=2))
+    print_experimental(task.to_dict())
 
 
 def handle_claim(args):
+    require_experimental_task(args.task_id)
     coord = get_coordinator(args.db)
     conductor = get_conductor(args.db)
     ok, handle, reason = coord.dispatch_attempt(
@@ -71,24 +91,22 @@ def handle_claim(args):
             "reason": reason,
             "nudge": nudge.to_dict() if nudge else None,
         }
-        print(json.dumps(out, indent=2))
+        print_experimental(out)
         sys.exit(1)
 
-    print(
-        json.dumps(
-            {
-                "success": True,
-                "assignment_id": handle.attempt_id,
-                "fence_token": handle.fence_token,
-                "actor_id": handle.actor_id,
-                "baseline_ref": handle.baseline_ref,
-            },
-            indent=2,
-        )
+    print_experimental(
+        {
+            "success": True,
+            "assignment_id": handle.attempt_id,
+            "fence_token": handle.fence_token,
+            "actor_id": handle.actor_id,
+            "baseline_ref": handle.baseline_ref,
+        }
     )
 
 
 def handle_submit(args):
+    require_experimental_task(args.task_id)
     coord = get_coordinator(args.db)
     diff = sys.stdin.read() if args.diff_file == "-" else open(args.diff_file).read()
     request_id = args.request_id or f"req_{uuid.uuid4().hex[:8]}"
@@ -102,13 +120,14 @@ def handle_submit(args):
         actual_cost=args.cost,
     )
     if not ok or not sub:
-        print(json.dumps({"success": False, "reason": reason}, indent=2))
+        print_experimental({"success": False, "reason": reason})
         sys.exit(1)
 
-    print(json.dumps({"success": True, "submission": sub.to_dict()}, indent=2))
+    print_experimental({"success": True, "submission": sub.to_dict()})
 
 
 def handle_review(args):
+    require_experimental_task(args.task_id)
     coord = get_coordinator(args.db)
     v = ReviewVerdict(args.verdict.upper())
     ok, rec, reason = coord.record_review(
@@ -120,19 +139,16 @@ def handle_review(args):
         notes=args.notes or "",
     )
     if not ok or not rec:
-        print(json.dumps({"success": False, "reason": reason}, indent=2))
+        print_experimental({"success": False, "reason": reason})
         sys.exit(1)
 
-    print(
-        json.dumps(
-            {
-                "success": True,
-                "review_id": rec.review_id,
-                "verdict": rec.verdict.value,
-                "blocking_findings": rec.blocking_findings,
-            },
-            indent=2,
-        )
+    print_experimental(
+        {
+            "success": True,
+            "review_id": rec.review_id,
+            "verdict": rec.verdict.value,
+            "blocking_findings": rec.blocking_findings,
+        }
     )
 
 
@@ -173,12 +189,12 @@ def main():
     subparsers = parser.add_subparsers(dest="action")
 
     # list
-    p_list = subparsers.add_parser("list", help="List enrolled tasks")
+    p_list = subparsers.add_parser("list", help="Inspect experimental task history")
     p_list.set_defaults(func=handle_list)
 
     # enroll
     p_enroll = subparsers.add_parser(
-        "enroll", help="Enroll a new task under the durable collaboration protocol"
+        "enroll", help="Create an experimental local task, never a managed task"
     )
     p_enroll.add_argument("--task-id", type=str, default=None)
     p_enroll.add_argument("--title", required=True)
@@ -191,7 +207,7 @@ def main():
 
     # claim
     p_claim = subparsers.add_parser(
-        "claim", help="Claim an assignment on an enrolled task"
+        "claim", help="Claim an experimental assignment using a local actor label"
     )
     p_claim.add_argument("--task-id", required=True)
     p_claim.add_argument("--actor-id", required=True)
@@ -201,7 +217,7 @@ def main():
 
     # submit
     p_submit = subparsers.add_parser(
-        "submit", help="Submit contribution for an enrolled task"
+        "submit", help="Submit an experimental local contribution"
     )
     p_submit.add_argument("--task-id", required=True)
     p_submit.add_argument("--assignment-id", required=True)
@@ -216,7 +232,7 @@ def main():
 
     # review
     p_review = subparsers.add_parser(
-        "review", help="Record review evaluation for candidate"
+        "review", help="Record an experimental review using a local reviewer label"
     )
     p_review.add_argument("--task-id", required=True)
     p_review.add_argument("--candidate-id", required=True)
@@ -241,7 +257,11 @@ def main():
         parser.print_help()
         sys.exit(1)
 
-    args.func(args)
+    try:
+        args.func(args)
+    except ManagedTaskRefusal as error:
+        print_experimental({"success": False, "reason": str(error)})
+        sys.exit(1)
 
 
 if __name__ == "__main__":

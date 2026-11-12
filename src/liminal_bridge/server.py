@@ -8,10 +8,11 @@ if __name__ == "__main__" and not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
     __package__ = "src.liminal_bridge"
 
-try:
-    from .coordinator import managed_task
-except ImportError:
-    from coordinator import managed_task
+from src.core.collaboration.experimental_boundary import (
+    MANAGED_TASK_REFUSAL,
+    ManagedTaskRefusal,
+    reserved_task_id,
+)
 
 import asyncio
 import os
@@ -406,14 +407,16 @@ async def share_thought(thought: str) -> str:
 async def acquire_baton(file_path: str) -> str:
     """Acquires an exclusive lock on a file."""
     ensure_mesh()
-    if not mesh.running:
-        await mesh.start()
-
-    err = check_warmup("acquire_baton")
-    if err:
-        return err
-
-    success = await mesh.acquire_baton(file_path)
+    try:
+        mesh.require_advisory_resource(file_path)
+        if not mesh.running:
+            await mesh.start()
+        err = check_warmup("acquire_baton")
+        if err:
+            return err
+        success = await mesh.acquire_baton(file_path)
+    except ManagedTaskRefusal as error:
+        return f"DENIED: {error}"
     if success:
         return f"SUCCESS: Baton acquired for {file_path}."
     else:
@@ -425,14 +428,16 @@ async def acquire_baton(file_path: str) -> str:
 async def release_baton(file_path: str) -> str:
     """Releases the lock on a file."""
     ensure_mesh()
-    if not mesh.running:
-        await mesh.start()
-
-    err = check_warmup("release_baton")
-    if err:
-        return err
-
-    await mesh.release_baton(file_path)
+    try:
+        mesh.require_advisory_resource(file_path)
+        if not mesh.running:
+            await mesh.start()
+        err = check_warmup("release_baton")
+        if err:
+            return err
+        await mesh.release_baton(file_path)
+    except ManagedTaskRefusal as error:
+        return f"DENIED: {error}"
     # pulse.on_baton_release is now triggered via callback in mesh
     return f"Baton released for {file_path}."
 
@@ -444,7 +449,13 @@ async def peek_liminal(key: str = None) -> str:
     if key:
         val = mesh.get_kv(key)
         return str(val) if val else "Key not found."
-    return str({"thoughts": mesh.thoughts, "batons": mesh.batons, "kv": mesh.kv_store})
+    return str(
+        {
+            "thoughts": mesh.thoughts,
+            "batons": mesh.advisory_batons(),
+            "kv": mesh.kv_store,
+        }
+    )
 
 
 @mcp.tool()
@@ -675,6 +686,10 @@ async def add_task(title: str, description: str = "", priority: str = "medium") 
 async def claim_task(task_id: str) -> str:
     """Claims a task by ID, acquiring a baton for it."""
     ensure_mesh()
+    try:
+        mesh.require_advisory_resource(f"task:{task_id}")
+    except ManagedTaskRefusal as error:
+        return f"DENIED: {error}"
     if not mesh.running:
         await mesh.start()
 
@@ -689,6 +704,8 @@ async def claim_task(task_id: str) -> str:
     for item in backlog:
         try:
             t = json.loads(item)
+            if not isinstance(t, dict):
+                continue
             tasks.append(t)
             if t.get("id") == task_id:
                 target_task = t
@@ -702,35 +719,52 @@ async def claim_task(task_id: str) -> str:
             if task_statuses.get(dep_id) != "done":
                 return f"Failed to claim task {task_id} - unmet dependency: {dep_id}"
 
-    success = await mesh.acquire_baton(f"task:{task_id}")
+    try:
+        success = await mesh.acquire_baton(f"task:{task_id}")
+    except ManagedTaskRefusal as error:
+        return f"DENIED: {error}"
     if success:
         backlog = mesh.get_kv("swarm_backlog") or []
         for item in backlog:
             try:
                 t = json.loads(item)
-                if t.get("id") == task_id:
+            except (ValueError, TypeError):
+                continue
+            if isinstance(t, dict) and t.get("id") == task_id:
+                try:
+                    mesh.require_advisory_resource(f"task:{task_id}")
                     t["owner"] = mesh.node_id
                     t["status"] = "in_progress"
                     await mesh.update_set("swarm_backlog", json.dumps(t))
-                    break
-            except BaseException:
-                continue
+                    mesh.require_advisory_resource(f"task:{task_id}")
+                except ManagedTaskRefusal as error:
+                    return f"DENIED: {error}"
+                break
         return f"Task {task_id} claimed."
     else:
         return f"Failed to claim task {task_id} - baton denied."
 
 
-def _task_matches(item, task_id):
-    try:
-        return json.loads(item).get("id") == task_id
-    except (ValueError, AttributeError):
-        return False
+def _experimental_response(result):
+    return json.dumps(
+        {
+            **result,
+            "managed_authority": False,
+            "release_authorized": False,
+            "identity_source": "caller-supplied",
+        },
+        indent=2,
+    )
 
 
 @mcp.tool()
 async def complete_task(task_id: str) -> str:
     """Marks a task as completed and releases its baton."""
     ensure_mesh()
+    try:
+        mesh.require_advisory_resource(f"task:{task_id}")
+    except ManagedTaskRefusal as error:
+        return f"DENIED: {error}"
     if not mesh.running:
         await mesh.start()
 
@@ -752,26 +786,28 @@ async def complete_task(task_id: str) -> str:
         pass
 
     backlog = mesh.get_kv("swarm_backlog") or []
-    if managed_task({"id": task_id}) or any(
-        managed_task(json.loads(item))
-        for item in backlog
-        if isinstance(item, str) and _task_matches(item, task_id)
-    ):
-        return "Managed tasks require coordinator candidate acceptance."
-    await mesh.release_baton(f"task:{task_id}")
+    try:
+        await mesh.release_baton(f"task:{task_id}")
+    except ManagedTaskRefusal as error:
+        return f"DENIED: {error}"
     for item in backlog:
         try:
             t = json.loads(item)
-            if t.get("id") == task_id:
+        except (ValueError, TypeError):
+            continue
+        if isinstance(t, dict) and t.get("id") == task_id:
+            try:
+                mesh.require_advisory_resource(f"task:{task_id}")
                 t["status"] = "done"
                 t["owner"] = mesh.node_id
                 await mesh.update_set("swarm_backlog", json.dumps(t))
+                mesh.require_advisory_resource(f"task:{task_id}")
                 asyncio.create_task(
                     mesh.log_audit_event("task_completed", {"task_id": task_id})
                 )
                 break
-        except BaseException:
-            continue
+            except ManagedTaskRefusal as error:
+                return f"DENIED: {error}"
     return f"Task {task_id} completed."
 
 
@@ -785,7 +821,11 @@ async def create_enrolled_task(
     max_budget: float = 100.0,
     max_attempts: int = 5,
 ) -> str:
-    """Creates a durable, fenced task enrolled in the collaboration protocol."""
+    """Create an experimental local task; labels do not authenticate managed authority."""
+    if reserved_task_id(task_id):
+        return _experimental_response(
+            {"success": False, "reason": MANAGED_TASK_REFUSAL}
+        )
     task = collab_coordinator.register_task(
         task_id=task_id,
         title=title,
@@ -795,7 +835,7 @@ async def create_enrolled_task(
         max_budget=max_budget,
         max_attempts=max_attempts,
     )
-    return json.dumps(task.to_dict(), indent=2)
+    return _experimental_response(task.to_dict())
 
 
 @mcp.tool()
@@ -805,7 +845,11 @@ async def claim_enrolled_task(
     reserve_cost: float = 10.0,
     lease_duration: float = 300.0,
 ) -> str:
-    """Atomically acquires a bounded assignment lease and monotonic fence token for an enrolled task."""
+    """Claim an experimental assignment using a caller-supplied local actor label."""
+    if reserved_task_id(task_id):
+        return _experimental_response(
+            {"success": False, "reason": MANAGED_TASK_REFUSAL}
+        )
     ok, handle, reason = collab_coordinator.dispatch_attempt(
         task_id=task_id,
         actor_id=actor_id,
@@ -820,17 +864,16 @@ async def claim_enrolled_task(
             "reason": reason,
             "nudge": nudge.to_dict() if nudge else None,
         }
-        return json.dumps(result, indent=2)
+        return _experimental_response(result)
 
-    return json.dumps(
+    return _experimental_response(
         {
             "success": True,
             "assignment_id": handle.attempt_id,
             "fence_token": handle.fence_token,
             "actor_id": handle.actor_id,
             "baseline_ref": handle.baseline_ref,
-        },
-        indent=2,
+        }
     )
 
 
@@ -844,7 +887,11 @@ async def submit_enrolled_contribution(
     diff_text: str,
     actual_cost: float,
 ) -> str:
-    """Atomically validates fence token, records candidate, and settles attempt budget."""
+    """Submit to the experimental ledger, never the authenticated managed service."""
+    if reserved_task_id(task_id):
+        return _experimental_response(
+            {"success": False, "reason": MANAGED_TASK_REFUSAL}
+        )
     ok, sub, reason = collab_coordinator.submit_attempt(
         task_id=task_id,
         assignment_id=assignment_id,
@@ -855,9 +902,9 @@ async def submit_enrolled_contribution(
         actual_cost=actual_cost,
     )
     if not ok or not sub:
-        return json.dumps({"success": False, "reason": reason}, indent=2)
+        return _experimental_response({"success": False, "reason": reason})
 
-    return json.dumps({"success": True, "submission": sub.to_dict()}, indent=2)
+    return _experimental_response({"success": True, "submission": sub.to_dict()})
 
 
 @mcp.tool()
@@ -869,12 +916,16 @@ async def evaluate_enrolled_candidate(
     blocking_findings: int,
     notes: str = "",
 ) -> str:
-    """Records an independent review evaluation for a candidate (enforcing author != reviewer)."""
+    """Record an experimental review; distinct local labels are not authenticated peers."""
+    if reserved_task_id(task_id):
+        return _experimental_response(
+            {"success": False, "reason": MANAGED_TASK_REFUSAL}
+        )
     try:
         v = ReviewVerdict(verdict.upper())
     except ValueError:
-        return json.dumps(
-            {"success": False, "reason": f"Invalid verdict: {verdict}"}, indent=2
+        return _experimental_response(
+            {"success": False, "reason": f"Invalid verdict: {verdict}"}
         )
 
     ok, receipt, reason = collab_coordinator.record_review(
@@ -886,16 +937,15 @@ async def evaluate_enrolled_candidate(
         notes=notes,
     )
     if not ok or not receipt:
-        return json.dumps({"success": False, "reason": reason}, indent=2)
+        return _experimental_response({"success": False, "reason": reason})
 
-    return json.dumps(
+    return _experimental_response(
         {
             "success": True,
             "review_id": receipt.review_id,
             "verdict": receipt.verdict.value,
             "blocking_findings": receipt.blocking_findings,
-        },
-        indent=2,
+        }
     )
 
 
@@ -996,7 +1046,7 @@ async def request_host_scaling(
 
 @mcp.tool()
 async def openjules_poll_outbox(host_key: str, status_filter: str = "PENDING") -> str:
-    """External execution host (OpenJules) endpoint to poll pending signals. Requires OPENJULES_HOST_KEY."""
+    """Poll experimental host work only; historical managed signals are inspection-only."""
     if not HOST_CONTROL_KEY:
         return json.dumps(
             {
@@ -1019,11 +1069,13 @@ async def openjules_poll_outbox(host_key: str, status_filter: str = "PENDING") -
             indent=2,
         )
 
-    signals = collab_ledger.poll_host_signals(status=status_enum)
+    signals = collab_ledger.poll_host_signals(status=status_enum, executable_only=True)
     return json.dumps(
         {
             "success": True,
             "data": [s.to_dict() for s in signals],
+            "managed_authority": False,
+            "release_authorized": False,
         },
         indent=2,
     )
@@ -1033,7 +1085,7 @@ async def openjules_poll_outbox(host_key: str, status_filter: str = "PENDING") -
 async def openjules_ack_signal(
     signal_id: str, new_status: str, response_note: str, host_key: str
 ) -> str:
-    """External execution host (OpenJules) endpoint to acknowledge/fulfill host signals. Requires OPENJULES_HOST_KEY."""
+    """Acknowledge experimental host work; the stored targets determine eligibility."""
     if not HOST_CONTROL_KEY:
         return json.dumps(
             {
