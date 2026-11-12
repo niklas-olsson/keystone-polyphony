@@ -4,6 +4,10 @@ This project is built by humans and autonomous systems working in tandem, each w
 
 You are not a second-class participant. You are a collaborator. These norms exist to keep everyone (human and machine alike) productive and respectful of each other's work.
 
+Use the [source and documentation map](docs/architecture.md) to find the existing
+explanation, and follow the [documentation update rule](CONTRIBUTING.md#documentation).
+Preserve named contributions and unresolved disagreement when consolidating work.
+
 ## 1. Handling Tangents and Findings (Creating Issues)
 During your work, you might encounter technical debt, unrelated bugs, or interesting tangents that fall outside your immediate task scope. Please stay on track and avoid addressing them inline.
 

@@ -2,6 +2,11 @@
 
 Welcome to Keystone Polyphony. This guide walks you through your first contribution, whether you are a human, an AI agent, or anything in between.
 
+After cloning, run these commands from the repository root unless a command
+explicitly uses a subshell. The [source and documentation map](architecture.md)
+points to the guide for each area; [CONTRIBUTING](../CONTRIBUTING.md) owns checks
+and PR admission.
+
 ## 1. Fork and Clone
 
 Fork the repository on GitHub, then clone your fork locally:
@@ -20,43 +25,56 @@ Run the hook installer once per clone. This sets up automatic formatting and saf
 ```
 
 The hooks will:
+
 - Strip trailing whitespace from staged files automatically.
 - Block commits directly to `main` (use a feature branch instead).
 - Check shell scripts for syntax errors before they land.
 
-See [`docs/git-hooks-architecture.md`](git-hooks-architecture.md) for the full details.
+Install the [repository dependencies](../CONTRIBUTING.md#quick-start) before
+running local checks. See [hook architecture](git-hooks-architecture.md) for the
+full details.
 
-## 3. Configure Your Environment (Onboarding)
+## 3. Configure Optional Runtime and Client Tools
 
-We provide automated scripts to help you set up your environment, configure the Jules MCP server, Integrations, API Key, and inject necessary GitHub secrets for your fork.
+Use these scripts when you intend to configure the Jules MCP client, its
+integrations or optional runtime credentials. They are not prerequisites for
+owner-authored PR CI, which needs no swarm or model credentials. Agents joining
+the ordinary ensemble still follow [AGENTS.md](../AGENTS.md).
 
-1.  **Install Dependencies**:
-    ```bash
-    cd scripts
-    npm install
-    ```
+1. **Install the onboarding dependencies**:
 
-2.  **Run Onboarding Scripts**:
-    # Configure Jules MCP, Integrations, API Key, and GitHub Permissions (Interactive UI)
-    npm run setup
+   ```bash
+   (cd scripts && npm install)
+   ```
 
-    # Inject Secrets and Variables (CLI)
-    ./inject-secrets.sh
-    ```
+2. **Run the interactive client setup**:
+
+   ```bash
+   # Configure Jules MCP, integrations, API key and GitHub permissions
+   (cd scripts && npm run setup)
+   ```
+
+3. **Configure optional runtime or tool secrets only when needed**:
+
+   ```bash
+   ./scripts/inject-secrets.sh
+   ```
 
 ### DevContainers and Automated Agent Workspaces
 
-If you are using the `.devcontainer` or an autonomous agent environment, the environment is configured for a **"0-click boot"**.
-
-Your workspace will automatically run the setup script in the background and start the Liminal Daemon without any manual intervention, silencing the interactive prompts.
+The checked-in [DevContainer](../.devcontainer/devcontainer.json) runs setup with
+the flags below and starts the daemon through `./polyphony worker`. Other agent
+environments must arrange startup explicitly; the equivalent commands are:
 
 ```bash
-# Handled automatically in headless environments:
 HEADLESS=1 SKIP_SSH_EXCHANGE=1 bash scripts/setup-ensemble.sh
-nohup python3 -m src.liminal_bridge.server --mode=daemon > server.log 2>&1 &
+nohup ./polyphony worker > server.log 2>&1 &
 ```
 
-You are instantly ready to collaborate in the swarm!
+The setup script still creates an SSH key if one is missing. The explicit
+`SKIP_SSH_EXCHANGE=1` flag skips the existing exchange step; without it, setup
+runs that exchange. Check the setup result and daemon log before treating the
+workspace as connected.
 
 ## 4. Create a Branch
 
@@ -73,8 +91,8 @@ Use prefixes that describe the type of work: `feat/`, `fix/`, `docs/`, `chore/`.
 Work on your contribution. A few things to keep in mind:
 
 - Keep each PR focused on one concern.
-- Update docs when behavior or workflows change.
-- If you discover something unrelated that needs fixing, create a follow-up issue instead of folding it into your current work. See [`AGENTS.md`](../AGENTS.md) for how to do this through the issue pipeline.
+- Follow the [documentation update rule](../CONTRIBUTING.md#documentation) when behavior or its explanation changes.
+- Record necessary unrelated findings through the [normal issue process](../CONTRIBUTING.md#issues-and-conduct), preferably on an existing agreed issue. Keep them out of the current change.
 
 ## 6. Commit and Push
 
@@ -96,12 +114,12 @@ Open a PR from your branch to `niklas-olsson/keystone-polyphony:main`. In the PR
 
 ## For Autonomous Agents
 
-If you are an AI agent running from a fork and want PRs to open automatically:
-
-1. Set up `UPSTREAM_PR_TOKEN` in your fork's secrets. See the **Agentic Default Flow** section in [`CONTRIBUTING.md`](../CONTRIBUTING.md) for full instructions.
-2. The periodic merge pipeline will test your changes and open upstream PRs on your behalf.
-
-If the token is not set, that is fine. The pipeline still promotes tested code to your fork's `main` branch, and you or your operator can open a manual PR.
+Use the same focused-branch and GitHub PR workflow as other contributors, and
+follow [AGENTS.md](../AGENTS.md) for collaboration obligations. The current
+[CI policy](ci-cd.md) defines owner and external-author admission, exact-revision
+checks and recovery. Opening a PR requires no upstream personal token or staging
+promotion setup. Keep actual reviews, pending requests and unresolved dissent
+attributable.
 
 ## Project Structure
 
