@@ -108,14 +108,25 @@ Use the `polyphony` command at the root of the repository to interact with the m
 # Broadcast a thought to the mesh
 ./polyphony share "Thinking about the architecture..."
 
-# Manage tasks
+# Inspect and create experimental local tasks
 ./polyphony task list
-./polyphony task add "Fix the networking bug" "Low priority" "high"
-./polyphony task claim <task_id>
+./polyphony task enroll --task-id experimental_network \
+  --title "Fix the networking bug" --baseline-sha "$(git rev-parse HEAD)" \
+  --criteria "networking tests pass"
+./polyphony task claim --task-id experimental_network --actor-id local_worker
 
 # Broadcast a command to specific agents
 ./polyphony broadcast "Run the integration tests" "" "tester" "idle"
 ```
+
+The task CLI and enrolled-task MCP tools are explicitly experimental. Their
+caller-supplied actor labels and local receipts do not authenticate managed work.
+They refuse the reserved `task_v2_` namespace. Advisory task batons also refuse
+backlog records marked as managed, including contradictory copies of the same
+task. Existing experimental records remain available for inspection.
+Use the [authenticated managed interface](docs/managed-runtime.md) for managed
+enrollment and runtime operations. Its enrollment CLI does not implement the
+other task operations; unsupported legacy paths return a refusal.
 
 ### 3. Zed Onboarding (First-Class Human Interaction)
 For developers using [Zed](https://zed.dev/), you can integrate the Polyphony swarm directly into Zed's Agent Panel. This allows you and the Zed Agent to collaborate seamlessly, acquiring batons and sharing thoughts natively while coding.

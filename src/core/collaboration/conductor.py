@@ -16,6 +16,7 @@ from .models import (
     ConductorLease,
 )
 from .ledger import FencedLedger
+from .experimental_boundary import require_experimental_task, reserved_task_id
 
 
 @dataclass
@@ -70,6 +71,8 @@ class EnsembleConductor:
         Invoked when a worker encounters 409 Conflict on a task.
         Identifies alternative eligible tasks and emits a deduplicated advisory nudge.
         """
+        if reserved_task_id(contested_task_id):
+            return None
         current_time = now if now is not None else time.time()
 
         # Find uncontested eligible tasks
@@ -78,6 +81,7 @@ class EnsembleConductor:
             t.task_id
             for t in all_tasks
             if t.task_id != contested_task_id
+            and not reserved_task_id(t.task_id)
             and t.status in (TaskStatus.OPEN, TaskStatus.INTEGRATING)
             and t.current_assignment_id is None
         ]
@@ -134,6 +138,8 @@ class EnsembleConductor:
         Dynamically proposes decomposing a contested task into an abstract interface/stub
         and parallel implementation leaves to unlock uncontested execution.
         """
+        if reserved_task_id(task_id):
+            return None
         task = self.ledger.get_task(task_id)
         if not task:
             return None
@@ -158,11 +164,16 @@ class EnsembleConductor:
 
     def apply_decomposition(self, task_id: str) -> List[TaskObjective]:
         """Creates the proposed subtasks in the ledger and marks original task HELD."""
+        require_experimental_task(task_id)
         proposal = self.decomposition_proposals.get(task_id)
         if not proposal:
             proposal = self.propose_task_decomposition(task_id)
             if not proposal:
                 return []
+
+        require_experimental_task(proposal["original_task_id"])
+        for child_id in proposal["subtask_ids"]:
+            require_experimental_task(child_id)
 
         orig = self.ledger.get_task(task_id)
         if not orig:
@@ -234,7 +245,11 @@ class EnsembleConductor:
                 result["fence_token"] = lease.fence_token
                 current_lease = lease
 
-        all_tasks = self.ledger.list_tasks()
+        all_tasks = [
+            task
+            for task in self.ledger.list_tasks()
+            if not reserved_task_id(task.task_id)
+        ]
         integrating_tasks = [t for t in all_tasks if t.status == TaskStatus.INTEGRATING]
         open_tasks = [t for t in all_tasks if t.status == TaskStatus.OPEN]
 

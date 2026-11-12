@@ -1,7 +1,17 @@
 try:
-    from .coordinator import managed_task
+    from src.core.collaboration.experimental_boundary import (
+        MANAGED_TASK_REFUSAL,
+        ManagedTaskRefusal,
+        managed_backlog_ids,
+        managed_task_resource,
+    )
 except ImportError:
-    from coordinator import managed_task
+    from core.collaboration.experimental_boundary import (
+        MANAGED_TASK_REFUSAL,
+        ManagedTaskRefusal,
+        managed_backlog_ids,
+        managed_task_resource,
+    )
 
 import asyncio
 import json
@@ -128,6 +138,7 @@ class LiminalMesh:
         self._sidecar_restart_delay = 5  # seconds
         self._monitor_task: Optional[asyncio.Task] = None
         self._idle_task: Optional[asyncio.Task] = None
+        self._gossip_task: Optional[asyncio.Task] = None
 
         # Pending lock requests
         self._lock_requests: Dict[str, asyncio.Future] = {}
@@ -309,7 +320,7 @@ class LiminalMesh:
             "node_id": self.node_id,
             "kv_store": kv_snapshot,
             "thoughts": self.thoughts,
-            "batons": self.batons,
+            "batons": self.advisory_batons(),
             "vector_clock": self.vector_clock,
         }
 
@@ -405,6 +416,8 @@ class LiminalMesh:
     def _save_kv(self, key: str, value: CRDT):
         """Persists a KV update."""
         self.storage.save_kv(key, value)
+        if key == "swarm_backlog":
+            self._discard_managed_batons()
 
     def _save_clock(self):
         """Persists the vector clock."""
@@ -1030,7 +1043,7 @@ class LiminalMesh:
             "type": "welcome",
             "target": peer_id,  # Only intended peer should process this
             "thoughts": self.thoughts,
-            "batons": self.batons,
+            "batons": self.advisory_batons(),
             "kv": kv_serialized,
             "vector_clock": self.vector_clock,
             "origin": self.node_id,
@@ -1177,6 +1190,17 @@ class LiminalMesh:
                     )
             return
 
+        if isinstance(p_type, str) and p_type in {
+            "baton_request",
+            "baton_claim",
+            "baton_release",
+            "baton_deny",
+        }:
+            resource = payload.get("resource")
+            if self.is_managed_task_resource(resource):
+                self._discard_managed_baton(resource)
+                return
+
         if p_type == "thought":
             content = payload.get("content")
             status = payload.get("status")
@@ -1271,8 +1295,9 @@ class LiminalMesh:
             self.log_aggregator.add_telemetry("contentions", 1)
 
             if target == self.node_id:
-                if resource in self._lock_requests:
-                    self._lock_requests[resource].set_result(False)
+                future = self._lock_requests.get(resource)
+                if future is not None and not future.done():
+                    future.set_result(False)
 
         elif p_type == "log":
             # Add remote log to aggregator
@@ -1340,11 +1365,7 @@ class LiminalMesh:
                 for node_id, thought in welcome_thoughts.items():
                     self._save_thought(node_id, thought)
 
-                # Merge batons
-                for resource, owner in welcome_batons.items():
-                    self.batons[resource] = owner
-
-                # Merge KV
+                # Classify batons using metadata from this same welcome first.
                 for key, crdt_data in welcome_kv.items():
                     if key.startswith("chat:"):
                         continue
@@ -1359,6 +1380,12 @@ class LiminalMesh:
                             self._save_kv(key, remote_crdt)
                     except Exception as e:
                         print(f"Error merging welcome KV for key {key}: {e}")
+
+                managed_ids = managed_backlog_ids(self.get_kv("swarm_backlog"))
+                for resource, owner in welcome_batons.items():
+                    if not managed_task_resource(resource, managed_ids):
+                        self.batons[resource] = owner
+                self._discard_managed_batons()
 
                 # Merge vector clock
                 self._merge_clock(welcome_vc)
@@ -1375,7 +1402,7 @@ class LiminalMesh:
                 {
                     "type": "welcome",
                     "thoughts": self.thoughts,
-                    "batons": self.batons,
+                    "batons": self.advisory_batons(),
                     "kv": {
                         k: v.to_dict() if hasattr(v, "to_dict") else str(v)
                         for k, v in self.kv_store.items()
@@ -1540,9 +1567,12 @@ class LiminalMesh:
         tasks = []
         for item in backlog_raw:
             try:
-                tasks.append(json.loads(item))
+                task = json.loads(item)
+                if isinstance(task, dict) and isinstance(task.get("id"), str):
+                    tasks.append(task)
             except (json.JSONDecodeError, TypeError):
                 continue
+        managed_ids = managed_backlog_ids(backlog_raw)
 
         # Filter: todo AND capabilities match AND dependencies met
         available = []
@@ -1551,7 +1581,9 @@ class LiminalMesh:
         task_statuses = {t.get("id"): t.get("status") for t in tasks if t.get("id")}
 
         for task in tasks:
-            if task.get("status") == "todo" and not managed_task(task):
+            if task.get("status") == "todo" and not managed_task_resource(
+                f"task:{task.get('id', '')}", managed_ids
+            ):
                 # Check dependencies first
                 blocked_by = task.get("blocked_by", [])
                 dependencies_met = True
@@ -1584,7 +1616,11 @@ class LiminalMesh:
             return None
 
         # Try to acquire baton first to avoid races
-        success = await self.acquire_baton(f"task:{task_id}")
+        try:
+            success = await self.acquire_baton(f"task:{task_id}")
+            self.require_advisory_resource(f"task:{task_id}")
+        except ManagedTaskRefusal:
+            return None
         if not success:
             return None
 
@@ -1603,9 +1639,19 @@ class LiminalMesh:
         if old_task_str:
             await self.update_set("swarm_backlog", old_task_str, remove=True)
 
+        try:
+            self.require_advisory_resource(f"task:{task_id}")
+        except ManagedTaskRefusal:
+            return None
+
         picked["status"] = "in_progress"
         picked["owner"] = self.node_id
         await self.update_set("swarm_backlog", json.dumps(picked), urgency="high")
+
+        try:
+            self.require_advisory_resource(f"task:{task_id}")
+        except ManagedTaskRefusal:
+            return None
 
         return picked
 
@@ -1841,8 +1887,45 @@ class LiminalMesh:
             "warm_up_duration": int(time.time() - start_time),
         }
 
+    def is_managed_task_resource(self, resource):
+        if not isinstance(resource, str) or not resource.startswith("task:"):
+            return False
+        if managed_task_resource(resource):
+            return True
+        return managed_task_resource(
+            resource, managed_backlog_ids(self.get_kv("swarm_backlog"))
+        )
+
+    def _discard_managed_baton(self, resource, future=None):
+        """Invalidate only ephemeral advisory ownership and its current waiter."""
+        self.batons.pop(resource, None)
+        if future is None:
+            future = self._lock_requests.get(resource)
+        if future is not None:
+            if not future.done():
+                future.set_result(False)
+            if self._lock_requests.get(resource) is future:
+                del self._lock_requests[resource]
+
+    def _discard_managed_batons(self):
+        managed_ids = managed_backlog_ids(self.get_kv("swarm_backlog"))
+        for resource in set(self.batons) | set(self._lock_requests):
+            if managed_task_resource(resource, managed_ids):
+                self._discard_managed_baton(resource)
+
+    def advisory_batons(self):
+        """Expose advisory lock state without suggesting managed ownership."""
+        self._discard_managed_batons()
+        return dict(self.batons)
+
+    def require_advisory_resource(self, resource, *, pending_request=None):
+        if self.is_managed_task_resource(resource):
+            self._discard_managed_baton(resource, pending_request)
+            raise ManagedTaskRefusal(MANAGED_TASK_REFUSAL)
+
     async def acquire_baton(self, resource: str, timeout: float = 2.0) -> bool:
         """Tries to acquire a lock on a resource."""
+        self.require_advisory_resource(resource)
         if resource in self.batons:
             if self.batons[resource] == self.node_id:
                 return True
@@ -1851,30 +1934,40 @@ class LiminalMesh:
         future = asyncio.get_running_loop().create_future()
         self._lock_requests[resource] = future
 
-        await self.broadcast({"type": "baton_request", "resource": resource})
-
         try:
-            await asyncio.wait_for(future, timeout=timeout)
-            result = future.result()
-            del self._lock_requests[resource]
+            await self.broadcast({"type": "baton_request", "resource": resource})
+            self.require_advisory_resource(resource, pending_request=future)
+            try:
+                result = await asyncio.wait_for(future, timeout=timeout)
+            except asyncio.TimeoutError:
+                self.require_advisory_resource(resource, pending_request=future)
+                if self._lock_requests.get(resource) is not future:
+                    return False
+                self.batons[resource] = self.node_id
+                await self.broadcast({"type": "baton_claim", "resource": resource})
+                self.require_advisory_resource(resource, pending_request=future)
+                asyncio.create_task(
+                    self.log_audit_event("baton_acquired", {"resource": resource})
+                )
+                return True
+            self.require_advisory_resource(resource, pending_request=future)
             if result:
                 asyncio.create_task(
                     self.log_audit_event("baton_acquired", {"resource": resource})
                 )
             return result
-        except asyncio.TimeoutError:
-            del self._lock_requests[resource]
-            self.batons[resource] = self.node_id
-            await self.broadcast({"type": "baton_claim", "resource": resource})
-            asyncio.create_task(
-                self.log_audit_event("baton_acquired", {"resource": resource})
-            )
-            return True
+        finally:
+            if self._lock_requests.get(resource) is future:
+                del self._lock_requests[resource]
+            if not future.done():
+                future.cancel()
 
     async def release_baton(self, resource: str):
+        self.require_advisory_resource(resource)
         if self.batons.get(resource) == self.node_id:
             del self.batons[resource]
             await self.broadcast({"type": "baton_release", "resource": resource})
+            self.require_advisory_resource(resource)
             asyncio.create_task(
                 self.log_audit_event("baton_released", {"resource": resource})
             )

@@ -28,12 +28,44 @@ The durable collaboration protocol is organized into:
 
 ### Experimental inspection and compatibility
 
-`scripts/task.py` and its `./polyphony task` wrapper still operate on the
+`scripts/task.py` and its `./polyphony task` wrapper operate on the
 experimental FencedLedger. Their caller-supplied actor and reviewer labels do
 not prove authenticated identity. A local candidate identifier is not a Git
 commit SHA. Use the [authenticated managed runtime interface](managed-runtime.md)
-for supported managed enrollment and execution. Full CLI/MCP convergence remains
-tracked in [#109](https://github.com/niklas-olsson/keystone-polyphony/issues/109).
+for supported managed enrollment and execution. The managed CLI implements
+enrollment only; unsupported legacy operations refuse managed tasks instead of
+silently translating caller labels into service credentials.
+
+New experimental CLI tasks default to `experimental_...` IDs. Explicit existing
+nonreserved IDs still work. The experimental ledger, its coordinator/conductor,
+and the four enrolled-task MCP mutators reject every `task_v2_` ID before task,
+assignment, budget, adapter, review or host-signal effects. A historical row with
+that prefix remains inspection-only even if it has an accepted candidate or a
+retained execution handle. No rows are migrated, renamed or deleted. The
+experimental ledger's own `schema_version: 2` remains its existing local format;
+it does not turn an ordinary experimental task into a canonical task.
+
+Advisory mesh task claims and completion, including raw `task:ID` batons, use the
+same refusal across MCP, dashboard, baton CLI, peer packets and autonomous task
+selection. In `swarm_backlog`, any matching copy with a managed marker or invalid
+explicit schema marker blocks the ID. Only an absent marker or exact integer
+`1` permits the legacy advisory path. This test considers all duplicate records
+and still applies when the authority is offline. New managed metadata discards
+only the ephemeral advisory lock and its pending claim; backlog and conversation
+history remain. Ordinary file locks and unmarked local tasks retain their
+advisory behavior. These checks prevent misleading parallel claims; they do not
+claim that a mesh baton ever bypassed the authenticated canonical service.
+
+The execution-host MCP outbox excludes historical signals whose stored targets
+contain reserved IDs or malformed target data. Such signals cannot be
+acknowledged or marked fulfilled. Direct ledger polling and
+`scripts/conductor.py poll-signals` remain historical inspection, with no
+execution authority. Ordinary experimental host signals keep their existing
+poll/acknowledgement flow. This compatibility change adds no service, provider
+call, credential, authority ledger or managed HTTP schema. Integrated acceptance
+and exact tested component revisions remain in
+[#109](https://github.com/niklas-olsson/keystone-polyphony/issues/109) and
+[ZPM #3](https://github.com/niklas-olsson/zero-point-modulator/issues/3).
 
 Inspect an existing locally accepted candidate with:
 

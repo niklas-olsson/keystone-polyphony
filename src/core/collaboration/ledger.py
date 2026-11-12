@@ -6,6 +6,13 @@ import time
 import os
 import hashlib
 from typing import Optional, List, Dict, Any, Tuple
+from .experimental_boundary import (
+    MANAGED_TASK_REFUSAL,
+    experimental_host_targets,
+    require_experimental_task,
+    reserved_task_id,
+    stored_experimental_host_targets,
+)
 from .models import (
     TaskObjective,
     TaskStatus,
@@ -157,6 +164,7 @@ class FencedLedger:
                 """)
 
     def create_task(self, task: TaskObjective) -> TaskObjective:
+        require_experimental_task(task.task_id)
         with self._get_connection() as conn:
             conn.execute("BEGIN IMMEDIATE")
             conn.execute(
@@ -235,6 +243,8 @@ class FencedLedger:
         now: Optional[float] = None,
     ) -> Tuple[bool, Optional[AssignmentClaim], str]:
         """Atomically checks task eligibility, increments fence, reserves budget, and persists assignment."""
+        if reserved_task_id(task_id):
+            return False, None, MANAGED_TASK_REFUSAL
         current_time = now if now is not None else time.time()
 
         with self._get_connection() as conn:
@@ -374,6 +384,8 @@ class FencedLedger:
         now: Optional[float] = None,
     ) -> Tuple[bool, Optional[ContributionSubmission], str]:
         """Atomically validates current fence, idempotency, settles budget, and commits submission."""
+        if reserved_task_id(task_id):
+            return False, None, MANAGED_TASK_REFUSAL
         current_time = now if now is not None else time.time()
 
         with self._get_connection() as conn:
@@ -542,6 +554,8 @@ class FencedLedger:
         now: Optional[float] = None,
     ) -> Tuple[bool, str]:
         """Cancels an assignment and settles its budget without silent budget reset."""
+        if reserved_task_id(task_id):
+            return False, MANAGED_TASK_REFUSAL
         current_time = now if now is not None else time.time()
         with self._get_connection() as conn:
             conn.execute("BEGIN IMMEDIATE")
@@ -604,6 +618,8 @@ class FencedLedger:
         now: Optional[float] = None,
     ) -> Tuple[bool, Optional[TaskObjective], str]:
         """Bumps spec revision or baseline, invalidating all prior review receipts."""
+        if reserved_task_id(task_id):
+            return False, None, MANAGED_TASK_REFUSAL
         current_time = now if now is not None else time.time()
         with self._get_connection() as conn:
             conn.execute("BEGIN IMMEDIATE")
@@ -670,6 +686,8 @@ class FencedLedger:
         now: Optional[float] = None,
     ) -> Tuple[bool, Optional[ReviewReceipt], str]:
         """Enforces author != reviewer and verifies spec_revision / baseline_sha matching."""
+        if reserved_task_id(task_id):
+            return False, None, MANAGED_TASK_REFUSAL
         current_time = now if now is not None else time.time()
         with self._get_connection() as conn:
             conn.execute("BEGIN IMMEDIATE")
@@ -1084,6 +1102,8 @@ class FencedLedger:
         now: Optional[float] = None,
     ) -> Tuple[bool, Optional[HostTelemetrySignal], str]:
         """Atomically emits a host telemetry scaling signal with deduplication and cost snapshotting."""
+        if not experimental_host_targets(target_task_ids):
+            return False, None, "Host signals require nonreserved experimental task IDs"
         current_time = now if now is not None else time.time()
         sorted_targets = sorted(list(target_task_ids))
 
@@ -1156,10 +1176,9 @@ class FencedLedger:
                 (HostSignalStatus.PENDING.value, signal_type.value),
             )
             for row in existing_cursor.fetchall():
-                try:
-                    row_targets = json.loads(row["target_task_ids"])
-                except Exception:
-                    row_targets = [row["target_task_ids"]]
+                if not stored_experimental_host_targets(row["target_task_ids"]):
+                    continue
+                row_targets = json.loads(row["target_task_ids"])
                 if sorted(row_targets) == sorted_targets:
                     conn.rollback()
                     existing_signal = HostTelemetrySignal.from_dict(dict(row))
@@ -1223,9 +1242,12 @@ class FencedLedger:
             return True, new_signal, "Host signal emitted"
 
     def poll_host_signals(
-        self, status: HostSignalStatus = HostSignalStatus.PENDING
+        self,
+        status: HostSignalStatus = HostSignalStatus.PENDING,
+        *,
+        executable_only: bool = False,
     ) -> List[HostTelemetrySignal]:
-        """Polls host signals filtered by status."""
+        """Inspect history by default; execution hosts must request the filtered view."""
         status_val = (
             status.value if isinstance(status, HostSignalStatus) else str(status)
         )
@@ -1234,7 +1256,12 @@ class FencedLedger:
                 "SELECT * FROM host_signal_outbox WHERE host_status = ? ORDER BY created_at ASC",
                 (status_val,),
             )
-            return [HostTelemetrySignal.from_dict(dict(r)) for r in cursor.fetchall()]
+            return [
+                HostTelemetrySignal.from_dict(dict(row))
+                for row in cursor.fetchall()
+                if not executable_only
+                or stored_experimental_host_targets(row["target_task_ids"])
+            ]
 
     def acknowledge_host_signal(
         self,
@@ -1261,6 +1288,13 @@ class FencedLedger:
             if not row:
                 conn.rollback()
                 return False, f"Signal {signal_id} not found"
+
+            if not stored_experimental_host_targets(row["target_task_ids"]):
+                conn.rollback()
+                return (
+                    False,
+                    "Historical managed or malformed host signals are inspection-only",
+                )
 
             conn.execute(
                 """

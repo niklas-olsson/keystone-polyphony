@@ -3,6 +3,11 @@ import time
 from typing import Any
 
 try:
+    from src.core.collaboration.experimental_boundary import ManagedTaskRefusal
+except ImportError:
+    from core.collaboration.experimental_boundary import ManagedTaskRefusal
+
+try:
     from .architect import Architect
     from .decisions import DecisionAdvisor
 except ImportError:
@@ -140,6 +145,10 @@ class Pulse:
 
             last_activity = thought.get("timestamp", 0)
             if now - last_activity > 300:
+                try:
+                    self.mesh.require_advisory_resource(resource)
+                except ManagedTaskRefusal:
+                    continue
                 print(
                     f"PULSE: Baton {resource} held by {owner} appears stale. Broadcasting release."
                 )
