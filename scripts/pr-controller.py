@@ -5,6 +5,7 @@ This trusted controller never checks out or executes candidate code.
 Provider reviews are advisory and dispatched only for external authors.
 """
 
+from collections import deque
 import json
 import os
 from pathlib import Path
@@ -16,6 +17,14 @@ import time
 VALIDATION = ".github/workflows/pr-validation.yml"
 EXTERNAL_REVIEW = ".github/workflows/external-pr-review.yml"
 CONTROLLER = ".github/workflows/pr-controller.yml"
+OBSERVATION_SECONDS = 300
+OBSERVATION_LIMIT = 20
+OBSERVATION_INTERVAL = 15
+STOP_RESULTS = {
+    "main published",
+    "new-main controller dispatched",
+    "current-policy restart required",
+}
 SHA = re.compile(r"[0-9a-f]{40}")
 REQUIRED_STEPS = {
     "Verify selected revisions",
@@ -32,6 +41,14 @@ class Hold(Exception):
 
 class PolicyMoved(Hold):
     """Restart from new main before interpreting another candidate."""
+
+
+class ValidationPending(Hold):
+    """A correctly attributed validation is explicitly nonterminal."""
+
+    def __init__(self, run):
+        self.run = run
+        super().__init__(f"Validation {run['id']} is {run['status']}")
 
 
 def positive_id(value):
@@ -192,6 +209,18 @@ def validation_run(github, plan):
         raise Hold(
             "Validation provenance does not match the trusted selected revision set"
         )
+    if (
+        run.get("status")
+        in (
+            "queued",
+            "in_progress",
+            "waiting",
+            "pending",
+            "requested",
+        )
+        and run.get("conclusion") is None
+    ):
+        raise ValidationPending(run)
     if run.get("status") != "completed" or run.get("conclusion") != "success":
         raise Hold(
             f"Validation {run['id']} is {run.get('conclusion') or run.get('status')}; inspect or rerun that validation"
@@ -436,12 +465,32 @@ def publish(github, plan):
     return {"main_sha": actual_main, "pr_merged": merged, "push_acknowledged": push_ok}
 
 
-def reconcile(github, repo, number, *, policy_sha=None, retry_missing=False):
+def reconcile(
+    github, repo, number, *, policy_sha=None, retry_missing=False, expected_plan=None
+):
     pr, plan = snapshot(github, repo, number)
     if policy_sha is not None and plan["base_sha"] != policy_sha:
         raise PolicyMoved("Main changed; restart the controller from current policy")
-    run = validation_run(github, plan)
+    if expected_plan is not None and plan != expected_plan:
+        raise Hold(
+            "PR changed while validation was pending; reconcile the new candidate"
+        )
+    try:
+        run = validation_run(github, plan)
+    except ValidationPending as error:
+        if expected_plan is not None:
+            raise
+        return {
+            "pr": number,
+            "status": "validation pending",
+            "reason": str(error),
+            "plan": plan,
+            "validation_run": error.run["id"],
+            "validation_attempt": error.run["run_attempt"],
+        }
     if run is None:
+        if expected_plan is not None:
+            raise Hold("Observed validation is no longer visible; inspect Actions")
         reserve_validation(github, plan, retry_missing)
         dispatch(github, VALIDATION, plan)
         return {"pr": number, "status": "validation dispatched", "plan": plan}
@@ -503,6 +552,120 @@ def reconcile(github, repo, number, *, policy_sha=None, retry_missing=False):
     }
 
 
+def observe_validations(github, pending):
+    """Yield qualified plans without reserving, dispatching or publishing work.
+
+    One fair queue shares 20 probes and a 300-second scheduling budget. Existing
+    API timeouts may finish after the deadline; the job's outer limit is 10 minutes.
+    """
+    queue = deque(
+        result
+        for result in pending
+        if result["status"] in {"validation dispatched", "validation pending"}
+    )
+    deadline = time.monotonic() + OBSERVATION_SECONDS
+    for _ in range(OBSERVATION_LIMIT):
+        if not queue or time.monotonic() + OBSERVATION_INTERVAL > deadline:
+            break
+        time.sleep(OBSERVATION_INTERVAL)
+        if time.monotonic() > deadline:
+            break
+        result = queue.popleft()
+        result["validation_observations"] = result.get("validation_observations", 0) + 1
+        try:
+            run = validation_run(github, result["plan"])
+            if run is None:
+                if result["status"] != "validation dispatched":
+                    raise Hold(
+                        "Previously visible validation disappeared; inspect Actions"
+                    )
+                queue.append(result)
+                continue
+        except ValidationPending as error:
+            result.update(
+                status="validation pending",
+                reason=str(error),
+                validation_run=error.run["id"],
+                validation_attempt=error.run["run_attempt"],
+            )
+            queue.append(result)
+            continue
+        except (Hold, subprocess.TimeoutExpired) as error:
+            result.update(
+                status="held",
+                reason=(
+                    "Validation observation timed out; inspect Actions"
+                    if isinstance(error, subprocess.TimeoutExpired)
+                    else str(error)
+                ),
+            )
+            print(json.dumps(result, sort_keys=True), flush=True)
+            continue
+        result.update(
+            status="validation qualified",
+            validation_run=run["id"],
+            validation_attempt=run["run_attempt"],
+        )
+        result.pop("reason", None)
+        yield result
+    for result in queue:
+        result.update(
+            status="held",
+            reason="Validation observation budget exhausted; inspect Actions and reconcile",
+            observation_budget_exhausted=True,
+        )
+        print(json.dumps(result, sort_keys=True), flush=True)
+
+
+def reconciliation_result(github, repo, number, **options):
+    try:
+        result = reconcile(github, repo, number, **options)
+    except PolicyMoved as error:
+        try:
+            dispatch(github, CONTROLLER)
+        except (Hold, subprocess.TimeoutExpired) as restart_error:
+            reason = (
+                "successor dispatch acknowledgement timed out; inspect Actions before retry"
+                if isinstance(restart_error, subprocess.TimeoutExpired)
+                else str(restart_error)
+            )
+            return {
+                "pr": number,
+                "status": "current-policy restart required",
+                "reason": str(error),
+                "followup": f"manual reconciliation required: {reason}",
+            }
+        return {
+            "pr": number,
+            "status": "new-main controller dispatched",
+            "reason": str(error),
+        }
+    except (Hold, subprocess.TimeoutExpired) as error:
+        return {
+            "pr": number,
+            "status": "held",
+            "reason": (
+                "Admission request timed out; inspect Actions and reconcile"
+                if isinstance(error, subprocess.TimeoutExpired)
+                else str(error)
+            ),
+        }
+    if result["status"] == "main published":
+        # GITHUB_TOKEN pushes do not trigger push workflows. New policy must
+        # handle all remaining candidates after this exact merge is published.
+        try:
+            dispatch(github, CONTROLLER)
+            result["followup"] = "new-main controller dispatched"
+        except (Hold, subprocess.TimeoutExpired) as error:
+            reason = (
+                "successor dispatch acknowledgement timed out; inspect Actions before retry"
+                if isinstance(error, subprocess.TimeoutExpired)
+                else str(error)
+            )
+            result["followup"] = f"manual reconciliation required: {reason}"
+    return result
+
+
 def main():
     if os.environ.get("GITHUB_REF") != "refs/heads/main":
         raise Hold("Controller must execute from trusted main")
@@ -525,37 +688,32 @@ def main():
             raise Hold("Invalid PR number in repository response")
         if pr.get("draft") is True:
             continue
-        try:
-            result = reconcile(
-                github,
-                repo,
-                number,
-                policy_sha=policy_sha,
-                retry_missing=retry_pr == str(number),
-            )
-        except PolicyMoved as error:
-            dispatch(github, CONTROLLER)
-            results.append(
-                {
-                    "pr": number,
-                    "status": "new-main controller dispatched",
-                    "reason": str(error),
-                }
-            )
-            break
-        except (Hold, subprocess.TimeoutExpired) as error:
-            result = {"pr": number, "status": "held", "reason": str(error)}
+        result = reconciliation_result(
+            github,
+            repo,
+            number,
+            policy_sha=policy_sha,
+            retry_missing=retry_pr == str(number),
+        )
         results.append(result)
         print(json.dumps(result, sort_keys=True), flush=True)
-        if result["status"] == "main published":
-            # GITHUB_TOKEN pushes do not trigger push workflows. Stop this policy
-            # and restart from newly trusted main before considering another PR.
-            try:
-                dispatch(github, CONTROLLER)
-                result["followup"] = "new-main controller dispatched"
-            except Hold as error:
-                result["followup"] = f"manual reconciliation required: {error}"
+        if result["status"] in STOP_RESULTS:
             break
+    else:
+        # Consider every ready PR before waiting, so queued work cannot delay an
+        # already-qualified candidate. Observation itself performs only reads.
+        for waiting in observe_validations(github, results):
+            result = reconciliation_result(
+                github,
+                repo,
+                waiting["pr"],
+                policy_sha=policy_sha,
+                expected_plan=waiting["plan"],
+            )
+            waiting.update(result)
+            print(json.dumps(waiting, sort_keys=True), flush=True)
+            if result["status"] in STOP_RESULTS:
+                break
     report = {"repository": github.repository, "results": results}
     Path("admission-results.json").write_text(json.dumps(report, indent=2) + "\n")
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
