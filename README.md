@@ -251,7 +251,7 @@ The Liminal Bridge includes a real-time **Interactive Dashboard** running on por
 - Getting started: [`docs/getting-started.md`](docs/getting-started.md)
 - Architecture: [`docs/architecture.md`](docs/architecture.md)
 - Liminal Bridge: [`docs/liminal-bridge.md`](docs/liminal-bridge.md)
-- Hybrid WASM LLM Engine: [`docs/hybrid-wasm-llm.md`](docs/hybrid-wasm-llm.md)
+- Pollen/WASM prototype status and external gateway prerequisites: [`docs/hybrid-wasm-llm.md`](docs/hybrid-wasm-llm.md)
 - Optional decision models and local ensemble demo: [`docs/decision-models.md`](docs/decision-models.md)
 - Durable worker choice, coordinator service and worktree trial: [`docs/durable-collaboration.md`](docs/durable-collaboration.md)
 - Authenticated OpenJules root-runtime handoff and managed task submission: [`docs/managed-runtime.md`](docs/managed-runtime.md)
