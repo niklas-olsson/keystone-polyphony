@@ -37,19 +37,21 @@ This document outlines the next steps and planned improvements for the "Liminal 
 - [x] **`scripts/load_test.py`**: Improve `KeyboardInterrupt` handling to ensure resources (DB files, identities) are cleaned up properly even on interrupted runs.
 - [x] **`tests/test_ssh_exchange.py`**: Refine the `except SystemExit: pass` block to distinguish between expected successful exits and unexpected error exits (e.g., `sys.exit(1)`).
 
-## 8. Hybrid WASM LLM Engine (Pollen + Keystone)
-This section tracks the work required to build a fully decentralized, peer-to-peer AI pipeline by layering Keystone Polyphony's agent coordination over Pollen's distributed compute fabric.
+## 8. Pollen/WASM inference prototype
 
-- [x] **WASM LLM Compilation:** Compile a lightweight LLM inference engine (e.g., a variant of `llama.cpp` or WasmNN) into a WebAssembly module compatible with Pollen's pure Go runtime. (Using `tangledgroup/llama-cpp-wasm` via `scripts/build_wasm_llm.sh`)
-- [x] **Pollen Compute Integration:** Write a Pollen wrapper around the WASM engine so it can receive inference requests via Pollen's QUIC transport and return generated tokens. (Implemented Extism PDK Go wrapper in `src/pollen_integration/wasm_wrapper.go`)
-- [x] **Model Weight Distribution:** Implement a mechanism to chunk and distribute large `.gguf` model files over Pollen's content-addressed peer-to-peer blob sharing (`pln seed`).
-- [x] **Hardware Capability Routing:** Implement Pollen-level metadata tags (`--prop role=gpu` or `--prop vram=16GB`) to ensure inference requests route only to capable shards.
-- [x] **Keystone Inference Provider:** Update Keystone's `Architect` class to accept a "Pollen Mesh" provider endpoint instead of just standard REST APIs (OpenAI/Anthropic).
-- [x] **Agent Task Handoff:** Modify the Keystone `swarm_backlog` logic so agents can seamlessly delegate heavy cognitive tasks (like summarizing massive codebases) down to the Pollen compute layer via `command_request` broadcasts.
-- [x] **Context Sync Loop:** Ensure the text output from Pollen WASM execution is automatically ingested back into Keystone's CRDT state as an agent "Thought," updating the shared Liminal Space context.
-- [x] **Model Sharding Logic:** Teach the Architect to split a `.gguf` into distinct layer stages for Pipeline Parallelism (PP) across the mesh.
-- [x] **Topology Tags:** Implement `pln grant --prop parallel_group=ring_1` logic for grouping shards with low-latency links for Tensor Parallelism (TP).
-- [x] **Distributed KV Cache:** Research utilizing Keystone's CRDT state to synchronize the KV cache across sharded WASM instances (critical for handling Sequence Parallelism and massive context windows). (Implemented CRDT/Blob hybrid in `src/liminal_bridge/distributed_kv_cache.py`)
+The original experiment supplied the helpers below. Checked items describe
+those helpers only. Engine integration and model execution remain unqualified;
+see [prototype status and prerequisites](docs/hybrid-wasm-llm.md).
+
+- [x] **WASM build helper:** Build the `tangledgroup/llama-cpp-wasm` submodule through `scripts/build_wasm_llm.sh`.
+- [ ] **Pollen compute integration:** Connect a real model engine to the Extism wrapper. `src/pollen_integration/wasm_wrapper.go` currently returns simulated text.
+- [x] **Model distribution preparation:** Chunk an existing file and generate a manifest and Pollen seeding commands. This does not qualify live transfer or model execution; missing files produce dummy data.
+- [x] **Capability advertisement and delegation:** Advertise tags and broadcast inference requests to peers with `pollen_compute`. Hardware suitability and shard execution need separate evidence.
+- [x] **External gateway adapter:** Route the Architect to an operator-supplied OpenAI-compatible endpoint. No gateway is supplied here.
+- [x] **Handler and thought publication:** Pass a received inference request to the configured Architect and publish its returned text. This is not a direct WASM-engine connection.
+- [ ] **Model sharding:** Replace the planner's fixed mock tensor map with real GGUF parsing and executable stage artifacts.
+- [ ] **Parallel execution:** Qualify pipeline, tensor or sequence parallelism. Advertised topology tags alone do not implement it.
+- [x] **KV-cache metadata helper:** Share supplied blob references and generate fetch commands through `DistributedKVCache`. Running-engine cache integration remains unqualified.
 
 ## Maintenance
 - [ ] **Migrate to MCP v2**: `requirements.txt` pins `mcp<2` because mcp 2.x renamed `FastMCP` to `MCPServer` (`from mcp.server.mcpserver import MCPServer`) and changed other APIs. Port `src/liminal_bridge/server.py` per https://py.sdk.modelcontextprotocol.io/v2/migration/ and remove the pin.
