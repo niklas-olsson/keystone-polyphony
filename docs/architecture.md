@@ -16,7 +16,7 @@ module inventory. Use [README](../README.md) for project orientation,
 | Peer transport and notification delivery | [mesh.py](../src/liminal_bridge/mesh.py), [sidecar/bridge.js](../src/liminal_bridge/sidecar/bridge.js) | [Mixed-transport swarm delivery](swarm-delivery.md) |
 | Durable authority, worker choice and coordinator service | [authority.py](../src/core/collaboration/authority.py), [coordinator_service.py](../src/liminal_bridge/coordinator_service.py) | [Durable collaboration](durable-collaboration.md) |
 | Managed enrollment and root-runtime handoff | [managed_runtime.py](../src/core/collaboration/managed_runtime.py), [managed_service.py](../src/liminal_bridge/managed_service.py), [managed_cli.py](../src/liminal_bridge/managed_cli.py) | [Canonical managed runtime handoff](managed-runtime.md) |
-| Bounded child grants and private child routes | [child_grants.py](../src/core/collaboration/child_grants.py), [child_service.py](../src/liminal_bridge/child_service.py) | [Bounded child grants](child-grants.md) |
+| Bounded delegated grants and private grant routes | [delegated_grants.py](../src/core/collaboration/delegated_grants.py), [delegated_grant_service.py](../src/liminal_bridge/delegated_grant_service.py) | [Bounded delegated grants and v1 compatibility](child-grants.md) |
 | Pull requests, exact-revision validation and admission | [workflows](../.github/workflows/), [pr-controller.py](../scripts/pr-controller.py), [review-external-pr.py](../scripts/review-external-pr.py) | [CI policy and recovery](ci-cd.md) |
 | Local checks and hooks | [.githooks](../.githooks/), [install-hooks.sh](../scripts/install-hooks.sh), [lint.sh](../scripts/lint.sh), [run-tests.sh](../scripts/run-tests.sh) | [Contribution checks](../CONTRIBUTING.md#local-hooks) and [hook architecture](git-hooks-architecture.md) |
 
@@ -29,8 +29,10 @@ refactoring.
 
 Public conversation preserves distinct authors, replies, declines and dissent.
 Reading a message does not grant managed execution authority. Independently
-invited peers remain separate from managed children; the conversation and child
-guides own those contracts.
+invited peers remain separate from delegated authority; the conversation and
+delegated-grant guides own those contracts. The legacy `child_grants.py` and
+`child_service.py` source modules retain aliases to the canonical implementation
+for existing consumers. Version-1 wire and journal names remain unchanged.
 
 The managed service owns canonical requirements, attempt budgets and artifact
 identity. ZPM owns repository capacity, and OpenJules owns container execution,

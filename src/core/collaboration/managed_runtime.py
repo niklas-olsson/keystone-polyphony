@@ -10,7 +10,7 @@ import re
 import secrets
 
 from .errors import Conflict
-from .child_grants import ChildGrantAuthority
+from .delegated_grants import DelegatedGrantAuthority
 
 CAPTURE_KINDS = frozenset({"patch", "log", "manifest"})
 
@@ -46,7 +46,7 @@ def scope(deployment_id, repository):
     }
 
 
-class ManagedRuntimeAuthority(ChildGrantAuthority):
+class ManagedRuntimeAuthority(DelegatedGrantAuthority):
     """Mixin sharing Coordinator transactions, budgets, artifacts and review."""
 
     def managed_enroll(

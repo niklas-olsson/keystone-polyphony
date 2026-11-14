@@ -1,9 +1,25 @@
-# Bounded child grants
+# Bounded delegated grants
 
-The canonical managed authority can reserve one level of runtime-owned child
-sessions under an existing root attempt. A child is neither a separate task nor
-another ZPM worker. Independently invited peers do not become descendants and
-are not affected by a root's cancellation.
+The canonical managed authority can delegate one bounded level of authority and
+runtime allowance under an existing root attempt. A delegated grant is neither
+a separate task, an OS process relationship nor another ZPM worker.
+Independently invited peers do not become subordinate grants and are not
+affected by a root's cancellation.
+
+The maintained implementation is
+[`delegated_grants.py`](../src/core/collaboration/delegated_grants.py), with
+`DelegatedGrantAuthority`, `DelegatedGrantNotAllocated`,
+`delegated_grant_policy` and `DELEGATED_GRANT_POLICY_FIELDS`. The private HTTP
+routes are installed by `install_delegated_grant_routes` in
+[`delegated_grant_service.py`](../src/liminal_bridge/delegated_grant_service.py).
+The old `child_grants.py` and `child_service.py` modules remain import-compatible
+aliases to the same objects, including the exception type and `CAPTURES`.
+
+The version-1 contract still uses `child` in method names, routes, fields,
+identifiers, launch keys and journal records. The operational names below remain
+exact; changing source names does not change profile or grant digests, persisted
+records, budget accounting or replay. "Child process" describes execution
+managed by OpenJules, while "delegated grant" describes Polyphony's authority.
 
 This implements the authority portion of
 [#112](https://github.com/niklas-olsson/keystone-polyphony/issues/112). Actual
