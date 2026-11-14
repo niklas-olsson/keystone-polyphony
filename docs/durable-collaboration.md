@@ -466,6 +466,70 @@ unchanged valid admissions and artifact bytes, owner-only revision and fresh
 review for incompatible records, preserved budgets, reserved/unknown recovery,
 old fence rejection and historical retries that do not overwrite newer effects.
 
+## Fixed dependency example, without a new plan authority
+
+[Issue #113's first slice](https://github.com/niklas-olsson/keystone-polyphony/issues/113#issuecomment-6869130985)
+is a reproducible fixture of existing native service operations. It pre-enrolls
+an interface task, two required implementation tasks, a final integration task
+and one unrelated task. Each worker selects its own task through its own
+authenticated principal. The example adds no production operation, schema,
+scheduler, installed deployment pin or dynamic plan-creation API.
+
+After installing the normal repository Python requirements, run:
+
+```bash
+mkdir -p .cache
+python3 -B scripts/example-fixed-dependencies.py --directory .cache/fixed-dependencies
+```
+
+The directory must be new. A repeated command refuses rather than replacing
+retained work. The fixture starts a literal-loopback native service on an
+ephemeral port, with temporary in-memory credentials and no execution adapter.
+It does not contact another deployment or provider, launch workers, run a model,
+operate on a Git repository or publish anything. Every input, work product and
+40-character baseline ID is synthetic. All eight principals, including the
+reviewer, are scripted identities in this one process. They exercise attribution
+and authorization checks; they are not independent human or model reviews.
+
+| Stage | Observed invariant |
+| --- | --- |
+| Conductor proposes enrollment | HTTP 403, with no authoritative task/budget/state change. |
+| Interface has no accepted receipt | Both leaves refuse without allocating attempts. Saved bytes and a recorded terminal observation are still insufficient. |
+| Interface is accepted | Both leaves hold distinct reserved attempts concurrently, bound to the same applicable prerequisite admission. This is concurrent eligibility, not measured parallel execution. |
+| One required leaf lacks passing review | Integration refuses. Another leaf's accepted contribution and both saved artifacts remain intact. |
+| Both required leaves are accepted | Integration can create its own separately attributed candidate/review/admission. |
+| Owner revises the interface | Old interface, leaf and integration admissions become inapplicable; unrelated acceptance and all five artifacts remain available. |
+| Store is reopened after service shutdown | The unrelated receipt is unchanged, stale admissions still refuse and all saved bytes remain readable. |
+
+The fixture keeps `authority.db` and `report.json` in the selected directory.
+The report names exact task, attempt, author, artifact, review and historical
+admission identities. It labels the invalidated packets as historical, and
+records which admission remains current after reopening. For invalidated work,
+owner-approved revisions and fresh attempts/candidates/applicable reviews are
+required; earlier artifacts may be deliberately salvaged. No status-only
+completion or reopening operation restores an old grant.
+
+Each task has an existing 60-second task budget and one 30-second allocation in
+this run, totaling 150 allocated seconds. The separately measured example wall
+time is not execution time or money spent. There is **no shared plan-wide budget**,
+atomic multi-task enrollment, stable cross-run plan ID, dynamic split or replay
+operation. Those are later #113 decisions. Native service enrollment accepts
+the existing dependencies here; the ZPM-installed managed enrollment endpoint
+does not acquire a dependency/plan API from this example.
+
+Use conversation when independent peers are exchanging views. Use an OpenJules
+child session when one root attempt owns the execution and capture. Use separate
+canonical tasks only when the owner needs separately accepted work products.
+Required dependency receipts gate dependent work; optional commentary is not
+silently promoted to a required task. The unrelated task illustrates work that
+remains independent when the required chain changes.
+
+`tests/test_fixed_dependency_example.py` runs the published command against the
+real local service and checks retained attribution, invalidation, allocation and
+non-overwrite behavior. The existing coordinator/adversarial/upgrade tests own
+the deeper protocol cases. No provider or browser qualification follows from
+this fixture.
+
 ## Verification and pass limits
 
 Limits were posted in the issue before development:
