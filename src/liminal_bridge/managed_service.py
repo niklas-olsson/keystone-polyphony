@@ -6,9 +6,12 @@ import math
 from aiohttp import web
 
 from src.core.collaboration.authority import digest, immutable_revision
-from src.core.collaboration.child_grants import CHILD_POLICY_FIELDS, child_policy
+from src.core.collaboration.delegated_grants import (
+    DELEGATED_GRANT_POLICY_FIELDS,
+    delegated_grant_policy,
+)
 from src.core.collaboration.child_outcomes import OUTCOME_VERSION
-from .child_service import install_child_routes
+from .delegated_grant_service import install_delegated_grant_routes
 from src.core.collaboration.managed_runtime import (
     ClaimNotAllocated,
     bounded_text,
@@ -83,7 +86,7 @@ def validate_managed_config(value):
             if not isinstance(profile, dict):
                 raise ValueError("profile must be an object")
             required = {"base", "attempt_seconds", "capabilities"}
-            optional = set(profile) & CHILD_POLICY_FIELDS
+            optional = set(profile) & DELEGATED_GRANT_POLICY_FIELDS
             _fields(profile, required | optional, "profile")
             immutable_revision(profile["base"])
             _seconds(profile["attempt_seconds"], "attempt_seconds")
@@ -98,7 +101,7 @@ def validate_managed_config(value):
                 ):
                     raise ValueError("max_children must be an integer from 0 to 64")
                 if profile["max_children"] or optional != {"max_children"}:
-                    if optional != CHILD_POLICY_FIELDS:
+                    if optional != DELEGATED_GRANT_POLICY_FIELDS:
                         raise ValueError(
                             "enabled child profiles require every child policy field"
                         )
@@ -225,9 +228,9 @@ def install_managed_routes(app, store, credentials, principal_key, config):
                 "managed_dispatch": profile is not None,
                 "external_root": profile is not None,
                 "children": False,
-                "child_grants": child_policy(profile) is not None,
+                "child_grants": delegated_grant_policy(profile) is not None,
                 "child_initial_outcome": OUTCOME_VERSION,
-                "child_policy": child_policy(profile),
+                "child_policy": delegated_grant_policy(profile),
                 "profile_supported": profile is not None,
                 "reason": "" if profile else "approved profile not found",
             }
@@ -357,7 +360,7 @@ def install_managed_routes(app, store, credentials, principal_key, config):
         )
         return web.json_response({"schema_version": 1, **binding, "candidate": result})
 
-    install_child_routes(app, store, authorize, body, query)
+    install_delegated_grant_routes(app, store, authorize, body, query)
     for name, handler in (
         ("enroll", enroll),
         ("claim", claim),
