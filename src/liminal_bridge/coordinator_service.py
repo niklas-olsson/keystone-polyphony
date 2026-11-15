@@ -18,26 +18,16 @@ from .coordinator import Conflict, Coordinator
 from .worktree_adapter import run_attempt
 from .approved_inputs import PublicRequirements
 from .managed_service import install_managed_routes, protect_legacy_call
+from .managed_configuration import (
+    ROLE_OPERATIONS,
+    validate_credentials,
+    validate_managed_config,
+)
+from .managed_installation import InstallationInputError, read_installation_inputs
 
 PRINCIPAL = web.RequestKey("principal", dict)
 
 
-ROLE_OPERATIONS = {
-    "owner": {"enroll", "revise", "accept", "admission", "observe"},
-    "worker": {
-        "start_attempt",
-        "acquire",
-        "write_resource",
-        "save_work",
-        "candidate",
-        "problem",
-        "respond",
-    },
-    "reviewer": {"evidence"},
-    "conductor": {"advise"},
-    "ingress": set(),
-    "runtime": set(),
-}
 # Reserved for server-injected identity. Never accept these from remote payloads.
 IDENTITY_FIELD = {
     "start_attempt": "worker",
@@ -55,16 +45,9 @@ IDENTITY_FIELD = {
 def create_app(
     store, credentials, adapter=None, execution=None, input_provider=None, managed=None
 ):
+    credentials = validate_credentials(credentials)
+    managed = validate_managed_config(managed)
     input_provider = input_provider or PublicRequirements()
-    if not credentials:
-        raise ValueError("explicit credentials required")
-    for token, principal in credentials.items():
-        if (
-            len(token) < 32
-            or not principal.get("identity")
-            or principal.get("role") not in ROLE_OPERATIONS
-        ):
-            raise ValueError("invalid credential configuration")
     if execution is not None:
         if adapter is None:
             raise ValueError("execution template requires an adapter")
@@ -363,7 +346,7 @@ class CoordinatorClient:
         )
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", default=".liminal/coordinator.db")
     parser.add_argument("--credentials", required=True)
@@ -375,11 +358,13 @@ def main():
         "--execution-config",
         help="owner-only JSON: repository, root, base, command argv",
     )
-    args = parser.parse_args()
-    credentials_path = Path(args.credentials)
-    if credentials_path.stat().st_mode & 0o077:
-        parser.error("credentials file must have mode 0600")
-    credentials = json.loads(credentials_path.read_text())
+    args = parser.parse_args(argv)
+    try:
+        credentials, managed = read_installation_inputs(
+            args.credentials, args.managed_config
+        )
+    except InstallationInputError as exc:
+        parser.error(f"{exc.code} at {exc.path}")
     adapter = execution = None
     if args.execution_config:
         from .worktree_adapter import GitWorktreeAdapter
@@ -397,11 +382,7 @@ def main():
             credentials,
             adapter,
             execution,
-            managed=(
-                json.loads(Path(args.managed_config).read_text())
-                if args.managed_config
-                else None
-            ),
+            managed=managed,
         ),
         host="127.0.0.1",
         port=args.port,

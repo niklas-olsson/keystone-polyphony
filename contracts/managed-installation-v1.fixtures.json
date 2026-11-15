@@ -1,0 +1,180 @@
+{
+  "fixture_notice": "Synthetic public inputs and expected native facts only; no usable deployment credentials, executed work or installed qualification.",
+  "contract_digest": "9a5a5d649f9dbf0357f200954381ee3ac669d89e5efcf3ed8a558c2a2ed32c7e",
+  "credentials": {
+    "fixture-owner-token-0000000000000000": {
+      "identity": "fixture-owner",
+      "role": "owner"
+    },
+    "fixture-runtime-token-00000000000000": {
+      "identity": "fixture-runtime",
+      "role": "runtime",
+      "deployment_id": "fixture-installation",
+      "repositories": [
+        "github:github.com/example/project"
+      ]
+    },
+    "fixture-reviewer-token-0000000000000": {
+      "identity": "fixture-reviewer",
+      "role": "reviewer"
+    }
+  },
+  "managed_config": {
+    "schema_version": 1,
+    "deployment_id": "fixture-installation",
+    "repositories": {
+      "github:github.com/example/project": {
+        "checks": [
+          "tests"
+        ],
+        "reviewers": [
+          "fixture-reviewer"
+        ],
+        "max_attempts": 3,
+        "budget_seconds": 900,
+        "profiles": {
+          "root-only": {
+            "base": "1111111111111111111111111111111111111111",
+            "attempt_seconds": 300,
+            "capabilities": [
+              "python"
+            ]
+          },
+          "child-enabled": {
+            "base": "2222222222222222222222222222222222222222",
+            "attempt_seconds": 300,
+            "capabilities": [
+              "python",
+              "read"
+            ],
+            "max_children": 2,
+            "max_child_seconds": 100,
+            "max_child_turns": 3,
+            "child_capabilities": [
+              "read"
+            ]
+          },
+          "child-disabled": {
+            "base": "3333333333333333333333333333333333333333",
+            "attempt_seconds": 300,
+            "capabilities": [
+              "python"
+            ],
+            "max_children": 0
+          },
+          "child-disabled-full": {
+            "base": "4444444444444444444444444444444444444444",
+            "attempt_seconds": 300,
+            "capabilities": [
+              "python"
+            ],
+            "max_children": 0,
+            "max_child_seconds": 100,
+            "max_child_turns": 3,
+            "child_capabilities": []
+          }
+        }
+      }
+    }
+  },
+  "expected_descriptor": {
+    "protocol": "managed-runtime-v1",
+    "deployment_id": "fixture-installation",
+    "profiles": [
+      {
+        "repository": "github:github.com/example/project",
+        "profile": "child-disabled",
+        "base": "3333333333333333333333333333333333333333",
+        "profile_digest": "e6c0c13fd2e3358000f88b90da177478ed38a25a61902f3b8b9d8949157e5d98",
+        "attempt_seconds": 300,
+        "capabilities": [
+          "python"
+        ],
+        "managed_dispatch": true,
+        "external_root": true,
+        "children": false,
+        "child_grants": false,
+        "child_initial_outcome": 1,
+        "child_policy": null,
+        "profile_supported": true,
+        "max_attempts": 3,
+        "budget_seconds": 900
+      },
+      {
+        "repository": "github:github.com/example/project",
+        "profile": "child-disabled-full",
+        "base": "4444444444444444444444444444444444444444",
+        "profile_digest": "d7ad2ce941475de9d1c4b534f8465d653af427e5ff855375520f4bae96bd98e2",
+        "attempt_seconds": 300,
+        "capabilities": [
+          "python"
+        ],
+        "managed_dispatch": true,
+        "external_root": true,
+        "children": false,
+        "child_grants": false,
+        "child_initial_outcome": 1,
+        "child_policy": null,
+        "profile_supported": true,
+        "max_attempts": 3,
+        "budget_seconds": 900
+      },
+      {
+        "repository": "github:github.com/example/project",
+        "profile": "child-enabled",
+        "base": "2222222222222222222222222222222222222222",
+        "profile_digest": "09e2c16ff2119c86eaf09de16480523ba149ec41fffb69fc2ac8edd9e3cad3d3",
+        "attempt_seconds": 300,
+        "capabilities": [
+          "python",
+          "read"
+        ],
+        "managed_dispatch": true,
+        "external_root": true,
+        "children": false,
+        "child_grants": true,
+        "child_initial_outcome": 1,
+        "child_policy": {
+          "max_children": 2,
+          "max_child_seconds": 100,
+          "max_child_turns": 3,
+          "child_capabilities": [
+            "read"
+          ]
+        },
+        "profile_supported": true,
+        "max_attempts": 3,
+        "budget_seconds": 900
+      },
+      {
+        "repository": "github:github.com/example/project",
+        "profile": "root-only",
+        "base": "1111111111111111111111111111111111111111",
+        "profile_digest": "6595f86f8974feb376813ae2e942cd024239d8eb47a2e28ec6bc6067d61a701f",
+        "attempt_seconds": 300,
+        "capabilities": [
+          "python"
+        ],
+        "managed_dispatch": true,
+        "external_root": true,
+        "children": false,
+        "child_grants": false,
+        "child_initial_outcome": 1,
+        "child_policy": null,
+        "profile_supported": true,
+        "max_attempts": 3,
+        "budget_seconds": 900
+      }
+    ]
+  },
+  "disabled_result": {
+    "schema_version": 1,
+    "service": "keystone-polyphony",
+    "validation_contract": "managed-installation-v1",
+    "contract_digest": "9a5a5d649f9dbf0357f200954381ee3ac669d89e5efcf3ed8a558c2a2ed32c7e",
+    "valid": true,
+    "managed_enabled": false,
+    "descriptor": null,
+    "errors": []
+  }
+}

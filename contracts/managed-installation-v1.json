@@ -1,0 +1,346 @@
+{
+  "schema_version": 1,
+  "service": "keystone-polyphony",
+  "validation_contract": "managed-installation-v1",
+  "canonical_digest": {
+    "algorithm": "sha256",
+    "encoding": "utf-8",
+    "sort_keys": true,
+    "separators": [
+      ",",
+      ":"
+    ],
+    "ensure_ascii": true,
+    "allow_nonfinite_numbers": false
+  },
+  "input": {
+    "command": "python -m src.liminal_bridge.managed_cli validate-installation --credentials PATH [--managed-config PATH] --validation-contract managed-installation-v1 --json",
+    "credentials": "Explicit existing UTF-8 JSON bearer-to-principal mapping; no ambient token lookup.",
+    "credential_permissions": "Reject any group/other permission bit; preserve existing owner-only modes including 0400 and 0600.",
+    "managed_config": "Explicit existing managed-runtime-v1 policy JSON; omitted or null is disabled.",
+    "validation": "The native service and command reuse the same credential-role, principal-scope and managed policy validators. Well-formed unavailable scopes do not grant access.",
+    "policy_bounds": {
+      "repositories": 1000,
+      "profiles_per_repository": 100,
+      "identifier_bytes": 512,
+      "names_per_list": 100,
+      "max_attempts": 1000,
+      "max_seconds": 604800,
+      "max_children": 64,
+      "max_child_turns": 1000
+    },
+    "profile_digest": "Existing native canonical profile bytes, without inserted child defaults or a new encoding."
+  },
+  "result": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schema_version",
+      "service",
+      "validation_contract",
+      "contract_digest",
+      "valid",
+      "managed_enabled",
+      "descriptor",
+      "errors"
+    ],
+    "properties": {
+      "schema_version": {
+        "const": 1
+      },
+      "service": {
+        "const": "keystone-polyphony"
+      },
+      "validation_contract": {
+        "const": "managed-installation-v1"
+      },
+      "contract_digest": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "valid": {
+        "type": "boolean"
+      },
+      "managed_enabled": {
+        "type": [
+          "boolean",
+          "null"
+        ]
+      },
+      "descriptor": {
+        "oneOf": [
+          {
+            "type": "null"
+          },
+          {
+            "$ref": "#/$defs/descriptor"
+          }
+        ]
+      },
+      "errors": {
+        "type": "array",
+        "maxItems": 1,
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "code",
+            "path"
+          ],
+          "properties": {
+            "code": {
+              "enum": [
+                "unsupported_contract",
+                "credentials_unreadable",
+                "credentials_permissions",
+                "credentials_invalid_json",
+                "credentials_invalid",
+                "managed_config_unreadable",
+                "managed_config_invalid_json",
+                "managed_config_invalid"
+              ]
+            },
+            "path": {
+              "enum": [
+                "/credentials",
+                "/managed_config",
+                "/validation_contract"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "$defs": {
+      "profile": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "repository",
+          "profile",
+          "base",
+          "profile_digest",
+          "attempt_seconds",
+          "capabilities",
+          "managed_dispatch",
+          "external_root",
+          "children",
+          "child_grants",
+          "child_initial_outcome",
+          "child_policy",
+          "profile_supported",
+          "max_attempts",
+          "budget_seconds"
+        ],
+        "properties": {
+          "repository": {
+            "type": "string"
+          },
+          "profile": {
+            "type": "string"
+          },
+          "base": {
+            "type": "string",
+            "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+          },
+          "profile_digest": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "attempt_seconds": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 604800
+          },
+          "capabilities": {
+            "type": "array",
+            "maxItems": 100,
+            "uniqueItems": true,
+            "items": {
+              "type": "string"
+            }
+          },
+          "managed_dispatch": {
+            "const": true
+          },
+          "external_root": {
+            "const": true
+          },
+          "children": {
+            "const": false
+          },
+          "child_grants": {
+            "type": "boolean"
+          },
+          "child_initial_outcome": {
+            "const": 1
+          },
+          "child_policy": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "max_children",
+                  "max_child_seconds",
+                  "max_child_turns",
+                  "child_capabilities"
+                ],
+                "properties": {
+                  "max_children": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 64
+                  },
+                  "max_child_seconds": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "maximum": 604800
+                  },
+                  "max_child_turns": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1000
+                  },
+                  "child_capabilities": {
+                    "type": "array",
+                    "maxItems": 100,
+                    "uniqueItems": true,
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "profile_supported": {
+            "const": true
+          },
+          "max_attempts": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000
+          },
+          "budget_seconds": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 604800
+          }
+        }
+      },
+      "descriptor": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "protocol",
+          "deployment_id",
+          "profiles"
+        ],
+        "properties": {
+          "protocol": {
+            "const": "managed-runtime-v1"
+          },
+          "deployment_id": {
+            "type": "string"
+          },
+          "profiles": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100000,
+            "items": {
+              "$ref": "#/$defs/profile"
+            }
+          }
+        }
+      }
+    },
+    "oneOf": [
+      {
+        "properties": {
+          "valid": {
+            "const": true
+          },
+          "managed_enabled": {
+            "const": true
+          },
+          "descriptor": {
+            "type": "object"
+          },
+          "errors": {
+            "maxItems": 0
+          }
+        }
+      },
+      {
+        "properties": {
+          "valid": {
+            "const": true
+          },
+          "managed_enabled": {
+            "const": false
+          },
+          "descriptor": {
+            "type": "null"
+          },
+          "errors": {
+            "maxItems": 0
+          }
+        }
+      },
+      {
+        "properties": {
+          "valid": {
+            "const": false
+          },
+          "managed_enabled": {
+            "type": "null"
+          },
+          "descriptor": {
+            "type": "null"
+          },
+          "errors": {
+            "minItems": 1
+          }
+        }
+      }
+    ]
+  },
+  "output_rules": {
+    "profile_order": [
+      "repository",
+      "profile"
+    ],
+    "input_error_values": "Never include credentials, token-map keys, raw inputs, private file paths or raw exception text.",
+    "input_error_exit_status": 1,
+    "success_exit_status": 0,
+    "unavailable_contract": "Exit 1 with fixed stderr validation contract unavailable; no usable validation receipt."
+  },
+  "effect_boundary": {
+    "reads": [
+      "explicit selected input files",
+      "selected credential file metadata",
+      "installed static validation contract"
+    ],
+    "forbidden": [
+      "input mutation",
+      "database or journal creation",
+      "listener",
+      "subprocess",
+      "provider client",
+      "network request",
+      "model invocation"
+    ],
+    "claims_not_made": [
+      "credential availability or authorization for an operation",
+      "executable runtime or browser qualification",
+      "source attestation",
+      "credential or configuration digest",
+      "publication permission"
+    ]
+  }
+}
