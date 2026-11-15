@@ -1,4 +1,4 @@
-"""Submit one explicit source execution request to the managed authority."""
+"""Validate an installation or submit one explicit managed execution request."""
 
 import argparse
 import asyncio
@@ -7,8 +7,6 @@ import os
 from pathlib import Path
 import sys
 from urllib.parse import urlsplit
-
-from aiohttp import ClientError, ClientSession, ClientTimeout
 
 from src.core.collaboration.managed_runtime import repository_identity
 
@@ -37,6 +35,8 @@ def service_url(value):
 
 async def submit(url, token, payload):
     """Bounded request, no ambient proxy/cookies or credential-bearing redirects."""
+    from aiohttp import ClientSession, ClientTimeout
+
     async with ClientSession(
         timeout=ClientTimeout(total=15),
         headers={"Authorization": "Bearer " + token},
@@ -67,9 +67,7 @@ async def submit(url, token, payload):
             return document
 
 
-def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["enroll"])
+def _enrollment_arguments(parser):
     parser.add_argument("--url", default="http://127.0.0.1:8766")
     parser.add_argument("--token-env", default="POLYPHONY_INGRESS_TOKEN")
     parser.add_argument("--deployment-id", required=True)
@@ -86,7 +84,48 @@ def main(argv=None):
     )
     parser.add_argument("--title", required=True)
     parser.add_argument("--requirements-file", required=True)
+
+
+def _validate_installation(argv):
+    from .managed_installation import (
+        ValidationContractUnavailable,
+        validate_installation,
+    )
+
+    validation = argparse.ArgumentParser(
+        description="Validate explicit inputs without service effects."
+    )
+    validation.add_argument("--credentials", required=True)
+    validation.add_argument("--managed-config")
+    validation.add_argument("--validation-contract", required=True)
+    validation.add_argument("--json", action="store_true", required=True)
+    args = validation.parse_args(argv)
+    try:
+        result = validate_installation(
+            args.credentials, args.managed_config, args.validation_contract
+        )
+    except ValidationContractUnavailable:
+        print("validation contract unavailable", file=sys.stderr)
+        return 1
+    print(json.dumps(result, sort_keys=True))
+    return 0 if result["valid"] else 1
+
+
+def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "validate-installation":
+        return _validate_installation(argv[1:])
+
+    # Retain the enrollment parser, including options before its command.
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        epilog="For read-only validation use: validate-installation --help",
+    )
+    parser.add_argument("command", choices=["enroll"])
+    _enrollment_arguments(parser)
     args = parser.parse_args(argv)
+    from aiohttp import ClientError
+
     try:
         repository_identity(args.repository)
         token = os.environ.get(args.token_env, "")
