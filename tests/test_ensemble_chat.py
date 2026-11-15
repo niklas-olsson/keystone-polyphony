@@ -100,8 +100,12 @@ async def test_missing_discovery_cannot_report_integration_success():
     os.environ.get("POLYPHONY_REAL_CHAT_TESTS") != "1",
     reason="real Hyperswarm qualification is explicitly enabled and mandatory in CI",
 )
-async def test_real_two_node_hyperswarm_conversation_and_restart(tmp_path):
+async def test_real_two_node_hyperswarm_conversation_and_restart(tmp_path, monkeypatch):
     """No transport stubs or public DHT: two real sidecars and a local bootstrap."""
+    # Explicitly select the isolated loopback topology for the peers as well as
+    # the bootstrap. This opt-in remains active when the second peer restarts.
+    monkeypatch.setenv("POLYPHONY_LOCAL_MEASUREMENT", "1")
+    monkeypatch.setenv("POLYPHONY_MEASUREMENT_LOOPBACK", "1")
     bootstrap = await asyncio.create_subprocess_exec(
         "node",
         str(ROOT / "src/liminal_bridge/sidecar/verify-bootstrap.js"),
