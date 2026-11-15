@@ -108,6 +108,104 @@ external attempts select different modes, and cannot launch through both paths.
 Without `--managed-config`, managed endpoints return unavailable. A health check
 or bearer credential alone does not establish managed runtime compatibility.
 
+## Validate installation inputs before startup
+
+After explicitly installing the repository dependencies, an installer can check
+its selected files without starting the authority:
+
+```sh
+python -m src.liminal_bridge.managed_cli validate-installation \
+  --credentials /etc/polyphony/credentials.json \
+  --managed-config /etc/polyphony/managed.json \
+  --validation-contract managed-installation-v1 --json
+```
+
+Both paths name existing UTF-8 JSON files. No token environment variable or
+unrelated secret is resolved. Omit `--managed-config`, or supply JSON `null`, to
+validate an explicitly disabled managed service. A disabled result cannot
+satisfy an installer's requirement for enabled support.
+
+The producer-owned [static contract](../contracts/managed-installation-v1.json)
+defines the exact result and effect boundary. Its
+[synthetic fixtures](../contracts/managed-installation-v1.fixtures.json) retain
+golden root-only and child-enabled/disabled profile digests. The contract digest
+is SHA-256 over sorted-key, compact, ASCII-escaped JSON encoded as UTF-8, with
+nonfinite numbers prohibited. This encoding identifies the new static artifact;
+it does not change the existing native profile digest or insert child defaults.
+
+| Result field | Meaning |
+| --- | --- |
+| `schema_version`, `service`, `validation_contract` | Exactly `1`, `keystone-polyphony`, `managed-installation-v1`. |
+| `contract_digest` | Lowercase SHA-256 of the installed static contract using the encoding above. |
+| `valid` | Whether the explicitly selected input files pass the shared native validators. |
+| `managed_enabled` | `true` for valid enabled input, `false` for valid disabled input, `null` for invalid input. |
+| `descriptor` | Valid enabled facts below; otherwise `null`, never partial approved output. |
+| `errors` | Empty on success, otherwise one bounded `{code, path}` error. |
+
+An enabled descriptor contains exactly `protocol: managed-runtime-v1`,
+`deployment_id` and `profiles`, sorted by repository then profile name. Each
+profile contains exactly:
+
+```text
+repository, profile, base, profile_digest, attempt_seconds, capabilities,
+managed_dispatch, external_root, children, child_grants, child_initial_outcome,
+child_policy, profile_supported, max_attempts, budget_seconds
+```
+
+The live capability endpoint and this descriptor use one native projection.
+`children` remains `false`. `child_policy` remains `null` when child grants are
+disabled, including profiles with explicit `max_children: 0`; their original
+profile digests remain distinct. Authority support does not establish executable
+child support. The producer retains its existing limits of 1,000 repositories
+and 100 profiles per repository. A consumer may accept a smaller subset; this
+command does not silently truncate it. Native bases may be full 40- or
+64-character lowercase hexadecimal Git IDs. An installer with a smaller
+profile or object-format subset must still reject unsupported native results;
+`valid: true` does not mean that every consumer admits the policy.
+
+Credentials must be a nonempty token-to-principal mapping. Tokens are strings
+of at least 32 characters; identities are nonempty strings, and both must encode
+as UTF-8. Roles and scope syntax use the service's validators. Previously
+malformed shapes, such as a Boolean identity or a list-valued role, now receive
+a validation refusal before startup instead of reaching later request handling.
+Existing valid unscoped owner, worker, reviewer and conductor principals remain
+supported. Runtime/ingress principals still need their explicit scope. A
+well-formed scope absent from the current policy is not a syntax error; existing
+request authorization refuses access to it. Validation does not require every
+optional role to be provisioned or prove that a credential authorizes a later
+operation. The existing file permission predicate rejects any group/other bit;
+owner-only `0400` and `0600` both remain supported.
+
+Input errors contain fixed codes and safe pointers only. Credential errors
+always use `/credentials`, never a token-map key. Managed-policy errors use
+`/managed_config`; an unsupported requested contract uses
+`/validation_contract`. Codes distinguish unreadable files, credential
+permissions, invalid JSON and invalid native configuration. Raw values,
+private paths and exception text are excluded. Exit status is zero for a valid
+result and one for an invalid result. If the installed static artifact itself
+is unavailable or has the wrong identity, the command exits one with the fixed
+stderr message `validation contract unavailable` and emits no usable receipt.
+
+Beyond normal Python imports, validation reads only the selected files,
+credential metadata and static contract. It creates no database, journal,
+listener, subprocess, provider client or network/model request, and changes no
+input bytes or deployment state. Use Python's `-B` option if the environment also
+requires suppression of ordinary interpreter bytecode caches. Repeated calls
+with unchanged inputs and contract produce the same result. Normal service
+startup uses the same credential and policy validation before constructing a
+Coordinator or execution adapter, independently of the static result artifact.
+
+The descriptor has no credential/configuration hash or source-attestation
+claim. The installer separately verifies the full producer revision, pins this
+static contract digest and privately binds the exact selected input files.
+Changed source, contract or input invalidates that consumer's earlier evidence.
+Offline composition preparation must remain data-only; invocation of this
+native command follows explicit bootstrap. Static success does not establish
+runtime availability, installed execution, browser authority or publication
+permission. The producer implementation and deterministic checks are separate
+from [#139's](https://github.com/niklas-olsson/keystone-polyphony/issues/139)
+required paired installation acceptance.
+
 ## Submit work
 
 Provide `POLYPHONY_INGRESS_TOKEN` through the environment and submit an explicit
