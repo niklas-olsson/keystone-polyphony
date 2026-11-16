@@ -72,6 +72,15 @@ permission; the pipeline does not expand its credentials or weaken branch rules.
 
 ## Where the code executes
 
+Public local jobs request only `[factory-keystone-polyphony]`, without default runner
+labels. Trusted non-PR jobs and same-repository PR-family jobs by an
+`OWNER`, `MEMBER` or `COLLABORATOR` route locally; fork, untrusted-author and
+missing-head PR-family jobs use their original GitHub-hosted Ubuntu runner.
+**PR Validation** always remains hosted, including manual candidate dispatches.
+Existing job conditions, admission rules, qualification gates and retained
+evidence are unchanged. The separate default-branch `local-runner-health.yml`
+workflow is manual and repository-owner-only; it is not candidate validation.
+
 The privileged controller executes only trusted main code. Its entry points are
 `pull_request_target`, completed validation/review-signal workflows, main pushes
 and manual dispatch on main. A review event is received by **PR Review Signal**,

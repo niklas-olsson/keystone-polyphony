@@ -10,7 +10,7 @@ permissions: {}
 
 jobs:
   notify:
-    runs-on: ubuntu-24.04
+    runs-on: ${{ fromJSON((!startsWith(github.event_name, 'pull_request') || (github.event.pull_request.head.repo.full_name != '' && github.event.pull_request.head.repo.full_name == github.repository && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association))) && '["factory-keystone-polyphony"]' || '"ubuntu-24.04"') }}
     timeout-minutes: 1
     steps:
       - run: 'true'

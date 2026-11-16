@@ -1,0 +1,30 @@
+name: Local runner health
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: local-runner-health
+  cancel-in-progress: false
+jobs:
+  smoke:
+    if: github.repository == 'niklas-olsson/keystone-polyphony' && github.actor == 'niklas-olsson'
+    runs-on: ["factory-keystone-polyphony"]
+    timeout-minutes: 5
+    steps:
+      - name: Check isolated local execution
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$RUNNER_NAME" = 'ghfactory-keystone-polyphony'
+          test -z "${GH_TOKEN:-}"
+          test -z "${GITHUB_TOKEN:-}"
+          test ! -e /var/run/docker.sock
+          test ! -e /host
+          test ! -e /home/phoenix
+          python3 --version
+          git --version
+          sudo -n true
+          printf 'runner=%s os=%s arch=%s\n' "$RUNNER_NAME" "$RUNNER_OS" "$RUNNER_ARCH"
+          printf 'memory.max='; cat /sys/fs/cgroup/memory.max
+          printf 'cpu.max='; cat /sys/fs/cgroup/cpu.max
