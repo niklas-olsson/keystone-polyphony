@@ -17,7 +17,7 @@ jobs:
   label-contributor:
     # Only run on upstream when a PR is merged.
     if: github.repository == 'niklas-olsson/keystone-polyphony' && github.event.pull_request.merged == true
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON((!startsWith(github.event_name, 'pull_request') || (github.event.pull_request.head.repo.full_name != '' && github.event.pull_request.head.repo.full_name == github.repository && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association))) && '["factory-keystone-polyphony"]' || '"ubuntu-latest"') }}
     steps:
       - name: Label merged PR as CONTRIBUTOR
         env:

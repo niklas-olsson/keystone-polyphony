@@ -35,7 +35,7 @@ jobs:
       github.repository == 'niklas-olsson/keystone-polyphony' &&
       github.ref == 'refs/heads/main' &&
       github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-24.04
+    runs-on: ${{ fromJSON((!startsWith(github.event_name, 'pull_request') || (github.event.pull_request.head.repo.full_name != '' && github.event.pull_request.head.repo.full_name == github.repository && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association))) && '["factory-keystone-polyphony"]' || '"ubuntu-24.04"') }}
     timeout-minutes: 5
     env:
       REVIEW_PR: ${{ inputs.pr_number }}
